@@ -141,7 +141,7 @@ NETWORK_CONDITION_MAP = {
 }
 
 
-def build_scenario_from_request(req: RunScenarioRequest) -> tuple:
+def build_scenario_from_request(req: RunScenarioRequest, ble_scan_interval: int = 60) -> tuple:
     """
     Translates scenario builder selections into simulation config objects.
     Uses the new PhysiologyEngine when subject_profile + day_schedule are provided.
@@ -279,7 +279,8 @@ def run_scenario(req: RunScenarioRequest, db: Session = Depends(get_db)):
 
         # Build config from builder or legacy scenario
         if req.scenario_id == "CUSTOM" or req.subject_profile or req.activity_profiles:
-            samples, wearable_config, gateway_config, fault_prof, expected_buffered =                 build_scenario_from_request(req)
+            samples, wearable_config, gateway_config, fault_prof, expected_buffered = \
+                build_scenario_from_request(req, ble_scan_interval=ble_scan_interval)
         else:
             if req.scenario_id not in NAMED_SCENARIOS:
                 raise HTTPException(404, f"Unknown scenario: {req.scenario_id}")
