@@ -145,12 +145,41 @@ def debug_run(db: Session = Depends(get_db)):
         db.delete(row)
         db.commit()
 
+        # Test full gateway run
+        from core.simulators.gateway import GatewayConfig, GatewaySimulator
+        from core.injectors.network import FAULT_PROFILES
+        from validation.engine import SimulationResult, ValidationEngine
+
+        phys_config2 = NAMED_SCENARIOS["GW_WIFI_OUTAGE_01"]()
+        generator2   = PhysiologyGenerator(phys_config2)
+        samples2     = list(generator2.generate())
+        wc2 = WearableConfig(firmware_version=FirmwareVersion.V1_2)
+        ws2 = WearableSimulator(wc2)
+        gw  = GatewaySimulator(GatewayConfig(fault_schedule=[(2400,3600,"WIFI_DOWN")]))
+
+        def mock_upload(packets):
+            return {"success": True, "accepted": len(packets)}
+
+        gw_summary = gw.run_scenario(ws2, samples2, upload_fn=mock_upload)
+
+        sim_result = SimulationResult(
+            scenario_id="GW_WIFI_OUTAGE_01",
+            run_id="DEBUG-FULL",
+            uploaded_packets=gw_summary["uploaded_packets"],
+            gateway_events=gw_summary["events"],
+            gateway_summary=gw_summary,
+            fault_profile={},
+            config={"fault_schedule":[(2400,3600,"WIFI_DOWN")], "expected_buffered_count":20},
+        )
+        report = ValidationEngine().run(sim_result)
+
         return {
             "status": "ok",
-            "samples_generated": len(samples),
-            "packets_produced": len(packets),
             "db_write": "ok",
-            "fw_config_snapshot_keys": list(pd.get("fw_config_snapshot", {}).keys()),
+            "full_run": "ok",
+            "total_uploaded": gw_summary["total_uploaded"],
+            "validation_passed": report.passed,
+            "checks": [{"id": r.check_id, "passed": r.passed} for r in report.results],
         }
     except Exception as e:
         return {
