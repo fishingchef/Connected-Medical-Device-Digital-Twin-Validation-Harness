@@ -1,0 +1,50 @@
+# Railway deployment — monorepo with two services
+
+# Service 1: Backend (FastAPI)
+# Root directory: backend/
+# Build command: pip install -r requirements.txt
+# Start command: uvicorn api.main:app --host 0.0.0.0 --port $PORT
+
+# Service 2: Frontend (Vite)
+# Root directory: frontend/
+# Build command: npm install && npm run build
+# Start command: (static site — serve dist/)
+
+# Environment variables (set in Railway dashboard):
+#   Backend:
+#     DATABASE_URL = postgresql://... (Railway auto-injects if Postgres added)
+#     PORT         = (auto-set by Railway)
+#   Frontend:
+#     VITE_API_URL = https://your-backend-service.railway.app
+
+# One-click deploy:
+# 1. Push this repo to GitHub
+# 2. railway.app → New Project → Deploy from GitHub
+# 3. Add backend service: root = backend/
+# 4. Add frontend service: root = frontend/
+# 5. Add PostgreSQL plugin to backend service
+# 6. Set VITE_API_URL in frontend service env vars
+
+version: "3.8"
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=sqlite:///./meddevice.db
+    volumes:
+      - ./backend:/app
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "5173:80"
+    environment:
+      - VITE_API_URL=http://backend:8000
+    depends_on:
+      - backend

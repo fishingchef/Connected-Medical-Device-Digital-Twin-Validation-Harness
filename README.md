@@ -1,4 +1,3 @@
-A connected-device test simulator that generates realistic wearable data and system failure conditions so developers and V&V can test device-gateway-cloud-dashboard behavior without needing a live wearer every time.
 # Connected Medical Device Digital Twin — Validation Harness
 
 End-to-end simulation platform that answers:
