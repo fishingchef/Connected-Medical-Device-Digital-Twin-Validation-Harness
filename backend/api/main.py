@@ -293,9 +293,12 @@ def run_scenario(req: RunScenarioRequest, db: Session = Depends(get_db)):
             except Exception:
                 delay_sec = 0.0
 
+            # Make packet_id unique per run to avoid constraint errors on repeat runs
+            unique_packet_id = f"{run_id}-{p_dict['packet_id']}"
+
             row = IngestedPacket(
                 run_id           = run_id,
-                packet_id        = p_dict["packet_id"],
+                packet_id        = unique_packet_id,
                 device_id        = p_dict["device_id"],
                 firmware_version = p_dict["firmware_version"],
                 sample_timestamp = p_dict["sample_timestamp"],
