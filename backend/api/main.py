@@ -83,6 +83,44 @@ def health():
     return {"status": "ok", "service": "meddevice-sim", "version": "0.1.0"}
 
 
+
+@app.get("/api/debug/run-test")
+def debug_run(db: Session = Depends(get_db)):
+    """Quick smoke test of the simulation pipeline — returns error details if broken."""
+    import traceback
+    try:
+        from core.generators.physiology import NAMED_SCENARIOS, PhysiologyGenerator
+        from core.simulators.wearable import WearableConfig, WearableSimulator, FirmwareVersion
+        from core.simulators.gateway import GatewayConfig, GatewaySimulator
+
+        phys_config = NAMED_SCENARIOS["GW_WIFI_OUTAGE_01"]()
+        generator   = PhysiologyGenerator(phys_config)
+        samples     = list(generator.generate())[:5]  # just 5 samples
+
+        wc = WearableConfig(firmware_version=FirmwareVersion.V1_2)
+        ws = WearableSimulator(wc)
+        packets = [ws.process_sample(s) for s in samples]
+        packets = [p for p in packets if p]
+
+        import json
+        # test JSON serialization of a packet
+        p_dict = packets[0].to_dict()
+        json.dumps(p_dict)
+
+        return {
+            "status": "ok",
+            "samples_generated": len(samples),
+            "packets_produced": len(packets),
+            "sample_packet_keys": list(p_dict.keys()),
+            "fw_config_snapshot_keys": list(p_dict.get("fw_config_snapshot", {}).keys()),
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": str(e),
+            "traceback": traceback.format_exc(),
+        }
+
 @app.get("/api/scenarios")
 def list_scenarios():
     return {
