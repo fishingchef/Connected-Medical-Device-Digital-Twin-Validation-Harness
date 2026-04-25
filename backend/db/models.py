@@ -1,81 +1,63 @@
-"""
-Database — SQLAlchemy models + async engine setup.
-Uses SQLite for local dev, PostgreSQL in production (set DATABASE_URL env var).
-"""
-
 from __future__ import annotations
-
 import os
 from datetime import datetime
-
-from sqlalchemy import (
-    Boolean, Column, Float, Integer, String, Text, DateTime, JSON,
-    create_engine, text
-)
+from sqlalchemy import Boolean, Column, Float, Integer, String, Text, DateTime, JSON, create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./meddevice.db")
-
-# SQLite needs check_same_thread=False for FastAPI
 connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
-
 engine = create_engine(DATABASE_URL, connect_args=connect_args)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
 
-# ---------------------------------------------------------------------------
-# Models
-# ---------------------------------------------------------------------------
-
 class SimulationRun(Base):
     __tablename__ = "simulation_runs"
-
     id               = Column(Integer, primary_key=True, index=True)
     run_id           = Column(String, unique=True, index=True)
     scenario_id      = Column(String, index=True)
     created_at       = Column(DateTime, default=datetime.utcnow)
-    status           = Column(String, default="running")   # running|complete|failed
+    status           = Column(String, default="running")
     config_json      = Column(JSON)
     summary_json     = Column(JSON)
 
 
 class IngestedPacket(Base):
     __tablename__ = "ingested_packets"
-
-    id                 = Column(Integer, primary_key=True, index=True)
-    run_id             = Column(String, index=True)
-    packet_id          = Column(String, unique=True, index=True)
-    device_id          = Column(String, index=True)
-    firmware_version   = Column(String)
-    # Timestamps — the critical data integrity check
-    sample_timestamp   = Column(String)   # original device time (must be preserved)
-    received_at        = Column(String)   # cloud ingest time
-    elapsed_sec        = Column(Integer)
-    # Vitals
-    motion             = Column(Float)
-    hr_bpm             = Column(Float)
-    rr_rpm             = Column(Float)
-    temp_c             = Column(Float)
-    signal_confidence  = Column(Float)
-    activity_label     = Column(String)
-    # Device state
-    battery_pct        = Column(Float)
-    firmware_state     = Column(String)
-    ambient_temp_c     = Column(Float)
-    ble_rssi_dbm       = Column(Integer)
-    crc_ok             = Column(Boolean)
-    retry_count        = Column(Integer)
-    buffered           = Column(Boolean)
-    # Ingestion metadata
-    duplicate          = Column(Boolean, default=False)
-    ingestion_delay_sec = Column(Float)   # received_at − sample_timestamp
+    id                    = Column(Integer, primary_key=True, index=True)
+    run_id                = Column(String, index=True)
+    packet_id             = Column(String, unique=True, index=True)
+    device_id             = Column(String, index=True)
+    firmware_version      = Column(String)
+    sample_timestamp      = Column(String)
+    received_at           = Column(String)
+    elapsed_sec           = Column(Integer)
+    motion                = Column(Float)
+    hr_bpm                = Column(Float)
+    rr_rpm                = Column(Float)
+    temp_c                = Column(Float)
+    signal_confidence     = Column(Float)
+    activity_label        = Column(String)
+    battery_pct           = Column(Float)
+    firmware_state        = Column(String)
+    ambient_temp_c        = Column(Float)
+    ble_rssi_dbm          = Column(Integer)
+    crc_ok                = Column(Boolean)
+    retry_count           = Column(Integer)
+    buffered              = Column(Boolean)
+    duplicate             = Column(Boolean, default=False)
+    ingestion_delay_sec   = Column(Float)
+    # Firmware processing metadata
+    hr_spike_rejected     = Column(Boolean, default=False)
+    motion_artifact_active= Column(Boolean, default=False)
+    alert_triggered       = Column(Boolean, default=False)
+    alert_type            = Column(String, nullable=True)
+    fw_config_snapshot    = Column(JSON, nullable=True)
 
 
 class ValidationResult(Base):
     __tablename__ = "validation_results"
-
     id              = Column(Integer, primary_key=True, index=True)
     run_id          = Column(String, index=True)
     scenario_id     = Column(String)
@@ -88,10 +70,6 @@ class ValidationResult(Base):
     evidence        = Column(JSON)
     created_at      = Column(DateTime, default=datetime.utcnow)
 
-
-# ---------------------------------------------------------------------------
-# Init
-# ---------------------------------------------------------------------------
 
 def create_tables():
     Base.metadata.create_all(bind=engine)

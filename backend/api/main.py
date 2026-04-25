@@ -209,8 +209,13 @@ def run_scenario(req: RunScenarioRequest, db: Session = Depends(get_db)):
                 crc_ok           = p_dict["crc_ok"],
                 retry_count      = p_dict["retry_count"],
                 buffered         = p_dict["buffered"],
-                duplicate        = False,
-                ingestion_delay_sec = delay_sec,
+                duplicate              = False,
+                ingestion_delay_sec    = delay_sec,
+                hr_spike_rejected      = p_dict.get("hr_spike_rejected", False),
+                motion_artifact_active = p_dict.get("motion_artifact_active", False),
+                alert_triggered        = p_dict.get("alert_triggered", False),
+                alert_type             = p_dict.get("alert_type"),
+                fw_config_snapshot     = p_dict.get("fw_config_snapshot"),
             )
             db.add(row)
         db.commit()
@@ -223,7 +228,8 @@ def run_scenario(req: RunScenarioRequest, db: Session = Depends(get_db)):
     expected_buffered = 0
     if fault_schedule:
         start_s, end_s, _ = fault_schedule[0]
-        expected_buffered = (end_s - start_s) // phys_config.sample_interval_sec
+        interval = getattr(phys_config, "sample_interval_sec", 60)
+        expected_buffered = (end_s - start_s) // interval
 
     sim_result = SimulationResult(
         scenario_id=req.scenario_id,
@@ -337,7 +343,12 @@ def get_packets(run_id: str, limit: int = 200, db: Session = Depends(get_db)):
                 "battery_pct":      p.battery_pct,
                 "buffered":         p.buffered,
                 "firmware_state":   p.firmware_state,
-                "ingestion_delay_sec": p.ingestion_delay_sec,
+                "ingestion_delay_sec":    p.ingestion_delay_sec,
+                "hr_spike_rejected":      p.hr_spike_rejected,
+                "motion_artifact_active": p.motion_artifact_active,
+                "alert_triggered":        p.alert_triggered,
+                "alert_type":             p.alert_type,
+                "fw_config_snapshot":     p.fw_config_snapshot,
             }
             for p in pkts
         ],
