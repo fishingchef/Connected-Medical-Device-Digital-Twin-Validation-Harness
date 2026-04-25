@@ -107,12 +107,50 @@ def debug_run(db: Session = Depends(get_db)):
         p_dict = packets[0].to_dict()
         json.dumps(p_dict)
 
+        # Now test full DB write
+        from db.models import IngestedPacket
+        p = packets[0]
+        pd = p.to_dict()
+        row = IngestedPacket(
+            run_id="DEBUG-TEST",
+            packet_id=pd["packet_id"] + "-debug",
+            device_id=pd["device_id"],
+            firmware_version=pd["firmware_version"],
+            sample_timestamp=pd["sample_timestamp"],
+            received_at=pd.get("received_at"),
+            elapsed_sec=pd["elapsed_sec"],
+            motion=pd["motion"],
+            hr_bpm=pd["hr_bpm"],
+            rr_rpm=pd["rr_rpm"],
+            temp_c=pd["temp_c"],
+            signal_confidence=pd["signal_confidence"],
+            activity_label=pd["activity_label"],
+            battery_pct=pd["battery_pct"],
+            firmware_state=pd["firmware_state"],
+            ambient_temp_c=pd["ambient_temp_c"],
+            ble_rssi_dbm=pd["ble_rssi_dbm"],
+            crc_ok=pd["crc_ok"],
+            retry_count=pd["retry_count"],
+            buffered=pd["buffered"],
+            duplicate=False,
+            ingestion_delay_sec=0.0,
+            hr_spike_rejected=pd.get("hr_spike_rejected", False),
+            motion_artifact_active=pd.get("motion_artifact_active", False),
+            alert_triggered=pd.get("alert_triggered", False),
+            alert_type=pd.get("alert_type"),
+            fw_config_snapshot=pd.get("fw_config_snapshot"),
+        )
+        db.add(row)
+        db.commit()
+        db.delete(row)
+        db.commit()
+
         return {
             "status": "ok",
             "samples_generated": len(samples),
             "packets_produced": len(packets),
-            "sample_packet_keys": list(p_dict.keys()),
-            "fw_config_snapshot_keys": list(p_dict.get("fw_config_snapshot", {}).keys()),
+            "db_write": "ok",
+            "fw_config_snapshot_keys": list(pd.get("fw_config_snapshot", {}).keys()),
         }
     except Exception as e:
         return {
