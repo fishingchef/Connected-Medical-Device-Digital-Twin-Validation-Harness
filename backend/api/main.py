@@ -1,9 +1,9 @@
 """
-FastAPI Application — Connected Device Validation Harness
+FastAPI — Connected Device Validation Harness
+Supports both legacy fixed scenarios and the new scenario builder.
 """
 from __future__ import annotations
-import traceback
-import uuid
+import traceback, uuid
 from datetime import datetime, timezone
 from typing import List, Optional
 
@@ -14,16 +14,15 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from db.models import IngestedPacket, SimulationRun, ValidationResult, create_tables, get_db
-from core.generators.physiology import NAMED_SCENARIOS, PhysiologyGenerator
+from core.generators.physiology import (
+    NAMED_SCENARIOS, PhysiologyGenerator, ScenarioConfig, ScenarioSegment
+)
 from core.simulators.wearable import WearableConfig, WearableSimulator, FirmwareVersion
 from core.simulators.gateway import GatewayConfig, GatewaySimulator
-from core.injectors.network import FAULT_PROFILES, NetworkFaultInjector
+from core.injectors.network import FAULT_PROFILES
 from validation.engine import SimulationResult, ValidationEngine
 
-app = FastAPI(
-    title="Medical Device Digital Twin — Validation Harness",
-    version="0.1.0",
-)
+app = FastAPI(title="Medical Device Digital Twin — Validation Harness", version="0.2.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -35,146 +34,236 @@ app.add_middleware(
 create_tables()
 
 
-class RunScenarioRequest(BaseModel):
-    scenario_id:         str   = "GW_WIFI_OUTAGE_01"
-    firmware_version:    str   = "1.2.0"
-    initial_battery_pct: float = 95.0
-    ambient_temp_c:      float = 22.0
-    fault_profile:       str   = "clean"
-    outage_start_min:    Optional[int] = None
-    outage_end_min:      Optional[int] = None
+# ── Request model ─────────────────────────────────────────────────────────────
 
+class RunScenarioRequest(BaseModel):
+    # Legacy fixed scenario
+    scenario_id:         str            = "GW_WIFI_OUTAGE_01"
+    firmware_version:    str            = "1.2.0"
+    initial_battery_pct: float          = 95.0
+    ambient_temp_c:      float          = 22.0
+    fault_profile:       str            = "clean"
+    outage_start_min:    Optional[int]  = None
+    outage_end_min:      Optional[int]  = None
+    # Scenario builder fields
+    duration_seconds:    Optional[int]  = None
+    activity_profiles:   Optional[List[str]] = None
+    wear_conditions:     Optional[List[str]] = None
+    signal_profiles:     Optional[List[str]] = None
+    network_conditions:  Optional[List[str]] = None
+    behavior_checks:     Optional[List[str]] = None
+
+
+# ── Scenario builder → physiology config mapper ───────────────────────────────
+
+# Map activity profile IDs to physiology generator activity names
+ACTIVITY_MAP = {
+    "resting":       "rest",
+    "walking":       "light",
+    "sleeping":      "rest",
+    "high_motion":   "vigorous",
+    "mixed_daily":   "moderate",
+    "clinical_rest": "rest",
+}
+
+# Map wear/contact conditions to confidence penalty + activity override
+WEAR_CONDITION_MAP = {
+    "normal":              {"confidence_penalty": 0.0,  "activity_override": None},
+    "low_adhesion":        {"confidence_penalty": 0.25, "activity_override": "poor_contact"},
+    "intermittent":        {"confidence_penalty": 0.35, "activity_override": "poor_contact"},
+    "perspiration":        {"confidence_penalty": 0.15, "activity_override": None},
+    "poor_placement":      {"confidence_penalty": 0.30, "activity_override": "poor_contact"},
+    "high_motion_artifact":{"confidence_penalty": 0.0,  "activity_override": "vigorous"},
+    "low_amplitude":       {"confidence_penalty": 0.40, "activity_override": "poor_contact"},
+    "noisy_signal":        {"confidence_penalty": 0.20, "activity_override": "poor_contact"},
+}
+
+# Map signal profiles to scenario segments
+SIGNAL_PROFILE_MAP = {
+    "stable":         lambda dur: [ScenarioSegment("rest", max(1, dur // 60))],
+    "hr_increase":    lambda dur: [ScenarioSegment("rest", max(1, dur // 120)), ScenarioSegment("moderate", max(1, dur // 120))],
+    "temp_increase":  lambda dur: [ScenarioSegment("rest", max(1, dur // 60), temp_ramp_per_min=0.02)],
+    "rr_spike":       lambda dur: [ScenarioSegment("rest", max(1, dur // 120)), ScenarioSegment("vigorous", max(1, min(5, dur // 60))), ScenarioSegment("rest", max(1, dur // 120))],
+    "low_confidence": lambda dur: [ScenarioSegment("poor_contact", max(1, dur // 60))],
+    "missing_vitals": lambda dur: [ScenarioSegment("poor_contact", max(1, dur // 60))],
+    "out_of_range":   lambda dur: [ScenarioSegment("vigorous", max(1, dur // 60))],
+}
+
+# Map network conditions to fault schedule
+NETWORK_CONDITION_MAP = {
+    "normal_sync":     {"fault_profile": "clean",       "fault_schedule": []},
+    "gateway_offline": {"fault_profile": "clean",       "fault_schedule": [(60, 300, "WIFI_DOWN")]},
+    "wifi_outage":     {"fault_profile": "clean",       "fault_schedule": [(2400, 3600, "WIFI_DOWN")]},
+    "ble_failure":     {"fault_profile": "flaky",       "fault_schedule": []},
+    "delayed_upload":  {"fault_profile": "flaky",       "fault_schedule": []},
+    "duplicate_retry": {"fault_profile": "flaky",       "fault_schedule": []},
+    "out_of_order":    {"fault_profile": "lossy",       "fault_schedule": []},
+    "auth_failure":    {"fault_profile": "tls_failure", "fault_schedule": []},
+    "cloud_delay":     {"fault_profile": "flaky",       "fault_schedule": []},
+}
+
+
+def build_scenario_from_request(req: RunScenarioRequest) -> tuple:
+    """
+    Translates scenario builder selections into simulation config objects.
+    Returns: (phys_config, wearable_config, gateway_config, fault_profile, expected_buffered)
+    """
+    duration = req.duration_seconds or 7200  # default 2h
+
+    # ── Physiology config ──
+    activities   = req.activity_profiles or ["resting"]
+    wear_conds   = req.wear_conditions   or ["normal"]
+    sig_profiles = req.signal_profiles   or ["stable"]
+
+    # Pick dominant wear condition effect
+    wear_effect = WEAR_CONDITION_MAP.get(wear_conds[0], WEAR_CONDITION_MAP["normal"])
+    activity_id = wear_effect["activity_override"] or ACTIVITY_MAP.get(activities[0], "rest")
+
+    # Build segments from signal profile
+    sig_fn    = SIGNAL_PROFILE_MAP.get(sig_profiles[0], SIGNAL_PROFILE_MAP["stable"])
+    segments  = sig_fn(duration)
+    # Override activity in segments based on selection
+    for seg in segments:
+        if wear_effect["activity_override"]:
+            seg.activity = wear_effect["activity_override"]
+        elif seg.activity in ("rest", "moderate", "vigorous"):
+            seg.activity = ACTIVITY_MAP.get(activities[0], seg.activity)
+
+    phys_config = ScenarioConfig(
+        sample_interval_sec=60,
+        segments=segments,
+    )
+
+    # ── Wearable config ──
+    fw_map = {
+        "1.0.0": FirmwareVersion.V1_0,
+        "1.2.0": FirmwareVersion.V1_2,
+        "2.0.0": FirmwareVersion.V2_0,
+    }
+    fw = fw_map.get(req.firmware_version, FirmwareVersion.V1_2)
+    wearable_config = WearableConfig(
+        firmware_version=fw,
+        initial_battery_pct=req.initial_battery_pct,
+        ambient_temp_c=req.ambient_temp_c,
+    )
+
+    # ── Gateway + network config ──
+    net_conds = req.network_conditions or ["normal_sync"]
+
+    # Merge fault schedules and pick worst fault profile
+    fault_schedule = []
+    fault_profile_id = "clean"
+    for nc in net_conds:
+        nc_cfg = NETWORK_CONDITION_MAP.get(nc, NETWORK_CONDITION_MAP["normal_sync"])
+        fault_schedule.extend(nc_cfg["fault_schedule"])
+        if nc_cfg["fault_profile"] != "clean":
+            fault_profile_id = nc_cfg["fault_profile"]
+
+    # Manual outage override from legacy fields
+    if req.outage_start_min is not None and req.outage_end_min is not None:
+        fault_schedule = [(req.outage_start_min * 60, req.outage_end_min * 60, "WIFI_DOWN")]
+
+    gateway_config = GatewayConfig(fault_schedule=fault_schedule)
+    fault_prof     = FAULT_PROFILES.get(fault_profile_id, FAULT_PROFILES["clean"])
+
+    # Expected buffered count
+    expected_buffered = 0
+    for (start_s, end_s, _) in fault_schedule:
+        expected_buffered += (end_s - start_s) // 60
+
+    return phys_config, wearable_config, gateway_config, fault_prof, expected_buffered
+
+
+# ── Routes ────────────────────────────────────────────────────────────────────
 
 @app.get("/")
 def health():
-    return {"status": "ok", "service": "meddevice-sim", "version": "0.1.0"}
+    return {"status": "ok", "service": "meddevice-sim", "version": "0.2.0"}
 
 
 @app.get("/api/scenarios")
 def list_scenarios():
-    return {
-        "scenarios": [
-            {"id": "GW_WIFI_OUTAGE_01", "name": "Gateway Wi-Fi outage with delayed upload",
-             "description": "2-hour rest session. Gateway offline min 40–60. Tests buffering, timestamp preservation, no duplicate on retry.",
-             "risk": "RISK-DP-001, RISK-DP-002, RISK-DP-003"},
-            {"id": "HIGH_MOTION_01", "name": "High motion — degraded signal",
-             "description": "30 min vigorous activity. Tests low-confidence HR/RR handling and alert suppression.",
-             "risk": "RISK-ALERT-001"},
-            {"id": "FEVER_TREND_01", "name": "Fever trend",
-             "description": "Gradual temp rise over 60 min. Tests threshold alert trigger.",
-             "risk": "RISK-ALERT-002"},
-            {"id": "POOR_CONTACT_01", "name": "Poor sensor contact",
-             "description": "30 min poor contact. Tests low-confidence data annotation.",
-             "risk": "RISK-DQ-001"},
-        ]
-    }
-
-
-@app.get("/api/debug/run-test")
-def debug_run_test(db: Session = Depends(get_db)):
-    return {"status": "ok", "message": "use /api/scenarios/run via POST"}
+    return {"scenarios": [
+        {"id": "GW_WIFI_OUTAGE_01",  "name": "Gateway Wi-Fi outage with delayed upload"},
+        {"id": "HIGH_MOTION_01",     "name": "High motion — degraded signal"},
+        {"id": "FEVER_TREND_01",     "name": "Fever trend"},
+        {"id": "POOR_CONTACT_01",    "name": "Poor sensor contact"},
+        {"id": "CUSTOM",             "name": "Custom scenario builder"},
+    ]}
 
 
 @app.post("/api/scenarios/run")
 def run_scenario(req: RunScenarioRequest, db: Session = Depends(get_db)):
     try:
-        if req.scenario_id not in NAMED_SCENARIOS:
-            raise HTTPException(404, f"Unknown scenario: {req.scenario_id}")
-
         run_id = f"RUN-{uuid.uuid4().hex[:12].upper()}"
 
-        fw_map = {"1.0.0": FirmwareVersion.V1_0, "1.2.0": FirmwareVersion.V1_2, "2.0.0": FirmwareVersion.V2_0}
-        fw = fw_map.get(req.firmware_version, FirmwareVersion.V1_2)
+        # Build config from builder or legacy scenario
+        if req.scenario_id == "CUSTOM" or req.activity_profiles:
+            phys_config, wearable_config, gateway_config, fault_prof, expected_buffered = \
+                build_scenario_from_request(req)
+        else:
+            if req.scenario_id not in NAMED_SCENARIOS:
+                raise HTTPException(404, f"Unknown scenario: {req.scenario_id}")
+            phys_config = NAMED_SCENARIOS[req.scenario_id]()
+            fw_map = {"1.0.0": FirmwareVersion.V1_0, "1.2.0": FirmwareVersion.V1_2, "2.0.0": FirmwareVersion.V2_0}
+            wearable_config = WearableConfig(
+                firmware_version=fw_map.get(req.firmware_version, FirmwareVersion.V1_2),
+                initial_battery_pct=req.initial_battery_pct,
+                ambient_temp_c=req.ambient_temp_c,
+            )
+            fault_schedule = []
+            if req.outage_start_min is not None and req.outage_end_min is not None:
+                fault_schedule = [(req.outage_start_min * 60, req.outage_end_min * 60, "WIFI_DOWN")]
+            gateway_config    = GatewayConfig(fault_schedule=fault_schedule)
+            fault_prof        = FAULT_PROFILES.get(req.fault_profile, FAULT_PROFILES["clean"])
+            expected_buffered = (fault_schedule[0][1] - fault_schedule[0][0]) // 60 if fault_schedule else 0
 
-        phys_config = NAMED_SCENARIOS[req.scenario_id]()
-        samples     = list(PhysiologyGenerator(phys_config).generate())
+        samples  = list(PhysiologyGenerator(phys_config).generate())
+        wearable = WearableSimulator(wearable_config)
+        gateway  = GatewaySimulator(gateway_config)
 
-        wearable = WearableSimulator(WearableConfig(
-            firmware_version=fw,
-            initial_battery_pct=req.initial_battery_pct,
-            ambient_temp_c=req.ambient_temp_c,
-        ))
-
-        fault_schedule = []
-        if req.outage_start_min is not None and req.outage_end_min is not None:
-            fault_schedule = [(req.outage_start_min * 60, req.outage_end_min * 60, "WIFI_DOWN")]
-        elif req.fault_profile == "outage_20min":
-            fault_schedule = [(2400, 3600, "WIFI_DOWN")]
-
-        gateway    = GatewaySimulator(GatewayConfig(fault_schedule=fault_schedule))
-        fault_prof = FAULT_PROFILES.get(req.fault_profile, FAULT_PROFILES["clean"])
         uploaded_packets = []
+        seen_ids = set()
 
         def upload_fn(packets):
-            now_str  = datetime.now(timezone.utc).isoformat()
-            accepted = []
-            seen     = set()
+            now_str = datetime.now(timezone.utc).isoformat()
             for p in packets:
-                if p.packet_id in seen:
+                unique_id = f"{run_id}-{p.packet_id}"
+                if unique_id in seen_ids:
                     continue
-                seen.add(p.packet_id)
+                seen_ids.add(unique_id)
                 p.received_at = now_str
-                accepted.append(p)
-
-            for p in accepted:
-                pd = p.to_dict()
-                unique_id = f"{run_id}-{pd['packet_id']}"
-
-                # Skip if already inserted (gateway retry sends same packet twice)
-                existing = db.query(IngestedPacket).filter(
-                    IngestedPacket.packet_id == unique_id
-                ).first()
-                if existing:
-                    continue
 
                 try:
-                    s = datetime.fromisoformat(pd["sample_timestamp"].replace("Z", "+00:00"))
-                    r = datetime.fromisoformat(pd["received_at"].replace("Z", "+00:00"))
+                    s = datetime.fromisoformat(p.sample_timestamp.replace("Z", "+00:00"))
+                    r = datetime.fromisoformat(now_str.replace("Z", "+00:00"))
                     delay = (r - s).total_seconds()
                 except Exception:
                     delay = 0.0
 
-                row = IngestedPacket(
-                    run_id                = run_id,
-                    packet_id             = unique_id,
-                    device_id             = pd["device_id"],
-                    firmware_version      = pd["firmware_version"],
-                    sample_timestamp      = pd["sample_timestamp"],
-                    received_at           = pd["received_at"],
-                    elapsed_sec           = pd["elapsed_sec"],
-                    motion                = pd["motion"],
-                    hr_bpm                = pd["hr_bpm"],
-                    rr_rpm                = pd["rr_rpm"],
-                    temp_c                = pd["temp_c"],
-                    signal_confidence     = pd["signal_confidence"],
-                    activity_label        = pd["activity_label"],
-                    battery_pct           = pd["battery_pct"],
-                    firmware_state        = pd["firmware_state"],
-                    ambient_temp_c        = pd["ambient_temp_c"],
-                    ble_rssi_dbm          = pd["ble_rssi_dbm"],
-                    crc_ok                = pd["crc_ok"],
-                    retry_count           = pd["retry_count"],
-                    buffered              = pd["buffered"],
-                    duplicate             = False,
-                    ingestion_delay_sec   = delay,
-                    hr_spike_rejected     = pd.get("hr_spike_rejected", False),
-                    motion_artifact_active= pd.get("motion_artifact_active", False),
-                    alert_triggered       = pd.get("alert_triggered", False),
-                    alert_type            = pd.get("alert_type"),
-                    fw_config_snapshot    = pd.get("fw_config_snapshot"),
-                )
-                db.add(row)
+                pd = p.to_dict()
+                db.add(IngestedPacket(
+                    run_id=run_id, packet_id=unique_id,
+                    device_id=pd["device_id"], firmware_version=pd["firmware_version"],
+                    sample_timestamp=pd["sample_timestamp"], received_at=now_str,
+                    elapsed_sec=pd["elapsed_sec"], motion=pd["motion"],
+                    hr_bpm=pd["hr_bpm"], rr_rpm=pd["rr_rpm"], temp_c=pd["temp_c"],
+                    signal_confidence=pd["signal_confidence"], activity_label=pd["activity_label"],
+                    battery_pct=pd["battery_pct"], firmware_state=pd["firmware_state"],
+                    ambient_temp_c=pd["ambient_temp_c"], ble_rssi_dbm=pd["ble_rssi_dbm"],
+                    crc_ok=pd["crc_ok"], retry_count=pd["retry_count"], buffered=pd["buffered"],
+                    duplicate=False, ingestion_delay_sec=delay,
+                    hr_spike_rejected=pd.get("hr_spike_rejected", False),
+                    motion_artifact_active=pd.get("motion_artifact_active", False),
+                    alert_triggered=pd.get("alert_triggered", False),
+                    alert_type=pd.get("alert_type"),
+                    fw_config_snapshot=pd.get("fw_config_snapshot"),
+                ))
                 uploaded_packets.append(pd)
             db.commit()
-            return {"success": True, "accepted": len(accepted)}
+            return {"success": True, "accepted": len(uploaded_packets)}
 
         gw_summary = gateway.run_scenario(wearable, samples, upload_fn=upload_fn)
-
-        interval          = getattr(phys_config, "sample_interval_sec", 60)
-        expected_buffered = 0
-        if fault_schedule:
-            start_s, end_s, _ = fault_schedule[0]
-            expected_buffered  = (end_s - start_s) // interval
 
         sim_result = SimulationResult(
             scenario_id=req.scenario_id,
@@ -184,10 +273,14 @@ def run_scenario(req: RunScenarioRequest, db: Session = Depends(get_db)):
             gateway_summary=gw_summary,
             fault_profile=fault_prof.__dict__,
             config={
-                "fault_schedule":          fault_schedule,
-                "expected_buffered_count": expected_buffered,
-                "firmware_version":        req.firmware_version,
-                "ambient_temp_c":          req.ambient_temp_c,
+                "fault_schedule":           gateway_config.fault_schedule,
+                "expected_buffered_count":  expected_buffered,
+                "firmware_version":         req.firmware_version,
+                "ambient_temp_c":           req.ambient_temp_c,
+                "activity_profiles":        req.activity_profiles,
+                "wear_conditions":          req.wear_conditions,
+                "network_conditions":       req.network_conditions,
+                "duration_seconds":         req.duration_seconds,
             },
         )
 
@@ -218,12 +311,10 @@ def run_scenario(req: RunScenarioRequest, db: Session = Depends(get_db)):
 
     except Exception as e:
         db.rollback()
-        error_detail = traceback.format_exc()
-        # Return 200 with error info so CORS headers are included
         return JSONResponse(status_code=200, content={
             "status":    "error",
             "error":     str(e),
-            "traceback": error_detail,
+            "traceback": traceback.format_exc(),
         })
 
 
