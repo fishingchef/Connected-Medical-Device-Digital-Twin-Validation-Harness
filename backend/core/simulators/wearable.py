@@ -208,7 +208,7 @@ class WearableSimulator:
             rr_rpm=round(rr, 1),
             temp_c=temp,
             signal_confidence=conf,
-            activity_label=sample.activity_label,
+            activity_label=getattr(sample, "activity_label", getattr(sample, "activity", "unknown")),
             battery_pct=round(self.battery, 1),
             firmware_state=self.state.value,
             ambient_temp_c=self.config.ambient_temp_c,

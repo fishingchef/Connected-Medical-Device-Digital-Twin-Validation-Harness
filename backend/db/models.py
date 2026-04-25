@@ -48,6 +48,11 @@ class IngestedPacket(Base):
     buffered              = Column(Boolean)
     duplicate             = Column(Boolean, default=False)
     ingestion_delay_sec   = Column(Float)
+    # New physiology signals
+    gait_cadence          = Column(Float, nullable=True)
+    step_count            = Column(Integer, nullable=True)
+    sleep_stage           = Column(String, nullable=True)
+    hour_of_day           = Column(Float, nullable=True)
     # Firmware processing metadata
     hr_spike_rejected     = Column(Boolean, default=False)
     motion_artifact_active= Column(Boolean, default=False)

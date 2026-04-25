@@ -15,7 +15,8 @@ from sqlalchemy.orm import Session
 
 from db.models import IngestedPacket, SimulationRun, ValidationResult, create_tables, get_db
 from core.generators.physiology import (
-    NAMED_SCENARIOS, PhysiologyGenerator, ScenarioConfig, ScenarioSegment
+    NAMED_SCENARIOS, PhysiologyGenerator, ScenarioConfig, ScenarioSegment,
+    NAMED_SCHEDULES, SUBJECT_PROFILES, PhysiologyEngine, DaySchedule
 )
 from core.simulators.wearable import WearableConfig, WearableSimulator, FirmwareVersion
 from core.simulators.gateway import GatewayConfig, GatewaySimulator
@@ -46,7 +47,9 @@ class RunScenarioRequest(BaseModel):
     outage_start_min:    Optional[int]  = None
     outage_end_min:      Optional[int]  = None
     # Scenario builder fields
-    duration_seconds:    Optional[int]  = None
+    subject_profile:     Optional[str]       = None
+    day_schedule:        Optional[str]       = None
+    duration_seconds:    Optional[int]       = None
     activity_profiles:   Optional[List[str]] = None
     wear_conditions:     Optional[List[str]] = None
     signal_profiles:     Optional[List[str]] = None
@@ -106,40 +109,11 @@ NETWORK_CONDITION_MAP = {
 def build_scenario_from_request(req: RunScenarioRequest) -> tuple:
     """
     Translates scenario builder selections into simulation config objects.
-    Returns: (phys_config, wearable_config, gateway_config, fault_profile, expected_buffered)
+    Uses the new PhysiologyEngine when subject_profile + day_schedule are provided.
+    Returns: (samples, wearable_config, gateway_config, fault_profile, expected_buffered)
     """
-    duration = req.duration_seconds or 7200  # default 2h
 
-    # ── Physiology config ──
-    activities   = req.activity_profiles or ["resting"]
-    wear_conds   = req.wear_conditions   or ["normal"]
-    sig_profiles = req.signal_profiles   or ["stable"]
-
-    # Pick dominant wear condition effect
-    wear_effect = WEAR_CONDITION_MAP.get(wear_conds[0], WEAR_CONDITION_MAP["normal"])
-    activity_id = wear_effect["activity_override"] or ACTIVITY_MAP.get(activities[0], "rest")
-
-    # Build segments from signal profile
-    sig_fn    = SIGNAL_PROFILE_MAP.get(sig_profiles[0], SIGNAL_PROFILE_MAP["stable"])
-    segments  = sig_fn(duration)
-    # Override activity in segments based on selection
-    for seg in segments:
-        if wear_effect["activity_override"]:
-            seg.activity = wear_effect["activity_override"]
-        elif seg.activity in ("rest", "moderate", "vigorous"):
-            seg.activity = ACTIVITY_MAP.get(activities[0], seg.activity)
-
-    phys_config = ScenarioConfig(
-        sample_interval_sec=60,
-        segments=segments,
-    )
-
-    # ── Wearable config ──
-    fw_map = {
-        "1.0.0": FirmwareVersion.V1_0,
-        "1.2.0": FirmwareVersion.V1_2,
-        "2.0.0": FirmwareVersion.V2_0,
-    }
+    fw_map = {"1.0.0": FirmwareVersion.V1_0, "1.2.0": FirmwareVersion.V1_2, "2.0.0": FirmwareVersion.V2_0}
     fw = fw_map.get(req.firmware_version, FirmwareVersion.V1_2)
     wearable_config = WearableConfig(
         firmware_version=fw,
@@ -147,11 +121,27 @@ def build_scenario_from_request(req: RunScenarioRequest) -> tuple:
         ambient_temp_c=req.ambient_temp_c,
     )
 
-    # ── Gateway + network config ──
-    net_conds = req.network_conditions or ["normal_sync"]
+    # ── Physiology: use new engine if subject+schedule provided ──
+    if req.subject_profile or req.day_schedule:
+        subj_id    = req.subject_profile or "healthy_adult_m"
+        sched_id   = req.day_schedule    or "typical_day"
+        subject    = SUBJECT_PROFILES.get(subj_id, list(SUBJECT_PROFILES.values())[0])
+        sched_fn   = NAMED_SCHEDULES.get(sched_id, list(NAMED_SCHEDULES.values())[0])
+        schedule   = sched_fn(subject=subject)
+        engine     = PhysiologyEngine(schedule, seed=42)
+        samples    = list(engine.generate())
+    else:
+        # Legacy path: build from signal profiles
+        duration     = req.duration_seconds or 7200
+        sig_profiles = req.signal_profiles  or ["stable"]
+        sig_fn       = SIGNAL_PROFILE_MAP.get(sig_profiles[0], SIGNAL_PROFILE_MAP["stable"])
+        segments     = sig_fn(duration)
+        phys_config  = ScenarioConfig(sample_interval_sec=60, segments=segments)
+        samples      = list(PhysiologyGenerator(phys_config).generate())
 
-    # Merge fault schedules and pick worst fault profile
-    fault_schedule = []
+    # ── Network config ──
+    net_conds        = req.network_conditions or ["normal_sync"]
+    fault_schedule   = []
     fault_profile_id = "clean"
     for nc in net_conds:
         nc_cfg = NETWORK_CONDITION_MAP.get(nc, NETWORK_CONDITION_MAP["normal_sync"])
@@ -159,19 +149,18 @@ def build_scenario_from_request(req: RunScenarioRequest) -> tuple:
         if nc_cfg["fault_profile"] != "clean":
             fault_profile_id = nc_cfg["fault_profile"]
 
-    # Manual outage override from legacy fields
     if req.outage_start_min is not None and req.outage_end_min is not None:
         fault_schedule = [(req.outage_start_min * 60, req.outage_end_min * 60, "WIFI_DOWN")]
 
-    gateway_config = GatewayConfig(fault_schedule=fault_schedule)
-    fault_prof     = FAULT_PROFILES.get(fault_profile_id, FAULT_PROFILES["clean"])
+    # Trim fault schedule to session length
+    session_secs = len(samples) * 60
+    fault_schedule = [(s, min(e, session_secs), t) for s, e, t in fault_schedule if s < session_secs]
 
-    # Expected buffered count
-    expected_buffered = 0
-    for (start_s, end_s, _) in fault_schedule:
-        expected_buffered += (end_s - start_s) // 60
+    gateway_config   = GatewayConfig(fault_schedule=fault_schedule)
+    fault_prof       = FAULT_PROFILES.get(fault_profile_id, FAULT_PROFILES["clean"])
+    expected_buffered = sum((e - s) // 60 for s, e, _ in fault_schedule)
 
-    return phys_config, wearable_config, gateway_config, fault_prof, expected_buffered
+    return samples, wearable_config, gateway_config, fault_prof, expected_buffered
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -198,9 +187,8 @@ def run_scenario(req: RunScenarioRequest, db: Session = Depends(get_db)):
         run_id = f"RUN-{uuid.uuid4().hex[:12].upper()}"
 
         # Build config from builder or legacy scenario
-        if req.scenario_id == "CUSTOM" or req.activity_profiles:
-            phys_config, wearable_config, gateway_config, fault_prof, expected_buffered = \
-                build_scenario_from_request(req)
+        if req.scenario_id == "CUSTOM" or req.subject_profile or req.activity_profiles:
+            samples, wearable_config, gateway_config, fault_prof, expected_buffered =                 build_scenario_from_request(req)
         else:
             if req.scenario_id not in NAMED_SCENARIOS:
                 raise HTTPException(404, f"Unknown scenario: {req.scenario_id}")
@@ -217,8 +205,8 @@ def run_scenario(req: RunScenarioRequest, db: Session = Depends(get_db)):
             gateway_config    = GatewayConfig(fault_schedule=fault_schedule)
             fault_prof        = FAULT_PROFILES.get(req.fault_profile, FAULT_PROFILES["clean"])
             expected_buffered = (fault_schedule[0][1] - fault_schedule[0][0]) // 60 if fault_schedule else 0
+            samples = list(PhysiologyGenerator(phys_config).generate())
 
-        samples  = list(PhysiologyGenerator(phys_config).generate())
         wearable = WearableSimulator(wearable_config)
         gateway  = GatewaySimulator(gateway_config)
 
@@ -258,6 +246,10 @@ def run_scenario(req: RunScenarioRequest, db: Session = Depends(get_db)):
                     alert_triggered=pd.get("alert_triggered", False),
                     alert_type=pd.get("alert_type"),
                     fw_config_snapshot=pd.get("fw_config_snapshot"),
+                    gait_cadence=pd.get("gait_cadence"),
+                    step_count=pd.get("step_count"),
+                    sleep_stage=pd.get("sleep_stage"),
+                    hour_of_day=pd.get("hour_of_day"),
                 ))
                 uploaded_packets.append(pd)
             db.commit()
@@ -353,7 +345,11 @@ def get_packets(run_id: str, limit: int = 200, db: Session = Depends(get_db)):
          "hr_spike_rejected": p.hr_spike_rejected,
          "motion_artifact_active": p.motion_artifact_active,
          "alert_triggered": p.alert_triggered, "alert_type": p.alert_type,
-         "fw_config_snapshot": p.fw_config_snapshot}
+         "fw_config_snapshot": p.fw_config_snapshot,
+         "gait_cadence": p.gait_cadence,
+         "step_count": p.step_count,
+         "sleep_stage": p.sleep_stage,
+         "hour_of_day": p.hour_of_day}
         for p in pkts
     ]}
 
