@@ -118,6 +118,15 @@ def run_scenario(req: RunScenarioRequest, db: Session = Depends(get_db)):
 
             for p in accepted:
                 pd = p.to_dict()
+                unique_id = f"{run_id}-{pd['packet_id']}"
+
+                # Skip if already inserted (gateway retry sends same packet twice)
+                existing = db.query(IngestedPacket).filter(
+                    IngestedPacket.packet_id == unique_id
+                ).first()
+                if existing:
+                    continue
+
                 try:
                     s = datetime.fromisoformat(pd["sample_timestamp"].replace("Z", "+00:00"))
                     r = datetime.fromisoformat(pd["received_at"].replace("Z", "+00:00"))
@@ -125,7 +134,6 @@ def run_scenario(req: RunScenarioRequest, db: Session = Depends(get_db)):
                 except Exception:
                     delay = 0.0
 
-                unique_id = f"{run_id}-{pd['packet_id']}"
                 row = IngestedPacket(
                     run_id                = run_id,
                     packet_id             = unique_id,
