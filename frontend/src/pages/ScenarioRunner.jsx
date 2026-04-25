@@ -54,7 +54,11 @@ export default function ScenarioRunner({ onRunComplete }) {
         outage_end_min:   useOutage ? outageEnd   : null,
       }
       const data = await api.runScenario(body)
-      setResult(data)
+      if (data.status === 'error') {
+        setError(`Backend error: ${data.error}`)
+      } else {
+        setResult(data)
+      }
     } catch (e) {
       setError(e.message)
     } finally {
