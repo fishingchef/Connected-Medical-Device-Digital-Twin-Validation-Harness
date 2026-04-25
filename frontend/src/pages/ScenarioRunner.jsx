@@ -14,12 +14,12 @@ const SUBJECT_PROFILES = [
 ]
 
 const DAY_SCHEDULES = [
-  { id: 'typical_day',         label: 'Typical Day',              detail: 'Sleep → work → exercise → evening (16h)',     icon: '🌅' },
-  { id: 'sleep_study',         label: 'Sleep Study',              detail: 'Full 8h sleep architecture with REM cycles',   icon: '😴' },
-  { id: 'exercise_session',    label: 'Exercise Session',         detail: 'Warmup → run → cooldown (60 min)',             icon: '🏃' },
-  { id: 'clinical_monitoring', label: 'Clinical Monitoring',      detail: 'Hospital bed, minimal activity (24h)',         icon: '🏥' },
-  { id: 'fever_progression',   label: 'Fever Progression',        detail: 'Gradual fever onset over 5h',                  icon: '🌡️' },
-  { id: 'high_motion_wear',    label: 'High Motion Wear Test',    detail: 'Walk → stairs → run → recovery (55 min)',      icon: '⚡' },
+  { id: 'typical_day',         label: 'Typical Day',              detail: 'Sleep → work → exercise → evening (16h)',     icon: '🌅', recommended: 'healthy_adult_m' },
+  { id: 'sleep_study',         label: 'Sleep Study',              detail: 'Full 8h sleep architecture with REM cycles',   icon: '😴', recommended: 'healthy_adult_m' },
+  { id: 'exercise_session',    label: 'Exercise Session',         detail: 'Warmup → run → cooldown (60 min)',             icon: '🏃', recommended: 'athletic_m' },
+  { id: 'clinical_monitoring', label: 'Clinical Monitoring',      detail: 'Hospital bed, minimal activity (24h)',         icon: '🏥', recommended: 'clinical_patient' },
+  { id: 'fever_progression',   label: 'Fever Progression',        detail: 'Gradual fever onset over 5h',                  icon: '🌡️', recommended: 'fever_patient' },
+  { id: 'high_motion_wear',    label: 'High Motion Wear Test',    detail: 'Walk → stairs → run → recovery (55 min)',      icon: '⚡', recommended: 'athletic_m' },
 ]
 
 const WEAR_CONDITIONS = [
@@ -81,7 +81,11 @@ export default function ScenarioRunner({ onRunComplete }) {
     )
   }
 
-  const subjectObj  = SUBJECT_PROFILES.find(s => s.id === subject)
+  const subjectObj   = SUBJECT_PROFILES.find(s => s.id === subject)
+  const scheduleObj  = DAY_SCHEDULES.find(s => s.id === schedule)
+  const recommended  = scheduleObj?.recommended
+  const mismatch     = recommended && subject !== recommended
+  const recommendedLabel = SUBJECT_PROFILES.find(s => s.id === recommended)?.label
   const scheduleObj = DAY_SCHEDULES.find(s => s.id === schedule)
 
   async function handleRun() {
@@ -188,6 +192,21 @@ export default function ScenarioRunner({ onRunComplete }) {
               ))}
             </div>
           </Section>
+
+          {/* Mismatch warning */}
+          {mismatch && (
+            <div style={{
+              padding: '10px 14px', borderRadius: 8, fontSize: 12,
+              background: 'rgba(245,166,35,0.08)', border: '1px solid rgba(245,166,35,0.3)',
+              color: 'var(--warn)', display: 'flex', alignItems: 'center', gap: 8,
+            }}>
+              <span>⚠</span>
+              <span>
+                <strong>{scheduleObj?.label}</strong> is designed for <strong>{recommendedLabel}</strong>.
+                Your selection will still run — subject physiology will be applied to the schedule.
+              </span>
+            </div>
+          )}
 
           {/* 3. Wear condition */}
           <Section number="3" title="Wear / Contact Condition" hint="multi-select">

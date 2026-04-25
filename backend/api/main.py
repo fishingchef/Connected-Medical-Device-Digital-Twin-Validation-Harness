@@ -122,9 +122,19 @@ def build_scenario_from_request(req: RunScenarioRequest) -> tuple:
     )
 
     # ── Physiology: use new engine if subject+schedule provided ──
+    # Default subject per schedule if not specified
+    SCHEDULE_DEFAULT_SUBJECT = {
+        "fever_progression":   "fever_patient",
+        "clinical_monitoring": "clinical_patient",
+        "sleep_study":         "healthy_adult_m",
+        "exercise_session":    "athletic_m",
+        "high_motion_wear":    "athletic_m",
+        "typical_day":         "healthy_adult_m",
+    }
     if req.subject_profile or req.day_schedule:
-        subj_id    = req.subject_profile or "healthy_adult_m"
-        sched_id   = req.day_schedule    or "typical_day"
+        sched_id   = req.day_schedule or "typical_day"
+        default_subj = SCHEDULE_DEFAULT_SUBJECT.get(sched_id, "healthy_adult_m")
+        subj_id    = req.subject_profile or default_subj
         subject    = SUBJECT_PROFILES.get(subj_id, list(SUBJECT_PROFILES.values())[0])
         sched_fn   = NAMED_SCHEDULES.get(sched_id, list(NAMED_SCHEDULES.values())[0])
         schedule   = sched_fn(subject=subject)
@@ -214,24 +224,28 @@ def run_scenario(req: RunScenarioRequest, db: Session = Depends(get_db)):
         seen_ids = set()
 
         def upload_fn(packets):
+            """
+            Called by gateway to upload a batch. Always returns accepted=len(packets)
+            so the gateway queue drains correctly. Deduplication is handled silently
+            by the seen_ids set — duplicates are skipped in DB but not penalised.
+            """
             now_str = datetime.now(timezone.utc).isoformat()
             for p in packets:
-                unique_id = f"{run_id}-{p.packet_id}"
-                if unique_id in seen_ids:
-                    continue
-                seen_ids.add(unique_id)
+                uid = f"{run_id}-{p.packet_id}"
+                if uid in seen_ids:
+                    continue   # skip duplicate silently
+                seen_ids.add(uid)
                 p.received_at = now_str
-
                 try:
-                    s = datetime.fromisoformat(p.sample_timestamp.replace("Z", "+00:00"))
-                    r = datetime.fromisoformat(now_str.replace("Z", "+00:00"))
+                    s     = datetime.fromisoformat(p.sample_timestamp.replace("Z", "+00:00"))
+                    r     = datetime.fromisoformat(now_str.replace("Z", "+00:00"))
                     delay = (r - s).total_seconds()
                 except Exception:
                     delay = 0.0
-
                 pd = p.to_dict()
+                uploaded_packets.append(pd)
                 db.add(IngestedPacket(
-                    run_id=run_id, packet_id=unique_id,
+                    run_id=run_id, packet_id=uid,
                     device_id=pd["device_id"], firmware_version=pd["firmware_version"],
                     sample_timestamp=pd["sample_timestamp"], received_at=now_str,
                     elapsed_sec=pd["elapsed_sec"], motion=pd["motion"],
@@ -251,9 +265,9 @@ def run_scenario(req: RunScenarioRequest, db: Session = Depends(get_db)):
                     sleep_stage=pd.get("sleep_stage"),
                     hour_of_day=pd.get("hour_of_day"),
                 ))
-                uploaded_packets.append(pd)
             db.commit()
-            return {"success": True, "accepted": len(uploaded_packets)}
+            # Always return full batch size so gateway queue drains correctly
+            return {"success": True, "accepted": len(packets)}
 
         gw_summary = gateway.run_scenario(wearable, samples, upload_fn=upload_fn)
 
@@ -276,7 +290,10 @@ def run_scenario(req: RunScenarioRequest, db: Session = Depends(get_db)):
             },
         )
 
-        report = ValidationEngine().run(sim_result)
+        behavior_checks = req.behavior_checks or []
+        min_expected    = max(1, len(samples) // 10)  # expect at least 10% data through
+        sim_result.config["min_expected_packets"] = min_expected
+        report = ValidationEngine(behavior_checks=behavior_checks or None).run(sim_result)
 
         for cr in report.results:
             db.add(ValidationResult(

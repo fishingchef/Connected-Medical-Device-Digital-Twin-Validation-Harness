@@ -287,13 +287,56 @@ ALL_CHECKS: List[Callable] = [
 # Engine
 # ---------------------------------------------------------------------------
 
+# Map behavior_check IDs from frontend to check functions
+BEHAVIOR_CHECK_MAP = {
+    "timestamps_preserved":   _check_timestamp_preservation,
+    "no_duplicates":          _check_no_duplicates,
+    "late_data_backfilled":   _check_no_data_loss_during_outage,
+    "stale_data_flagged":     _check_upload_order,
+    "low_confidence_handled": _check_low_confidence_not_alerted,
+    "no_false_alert_stale":   _check_low_confidence_not_alerted,
+    "failure_logged":         _check_battery_affects_confidence,
+}
+
+
 class ValidationEngine:
 
-    def __init__(self, checks: Optional[List[Callable]] = None):
-        self.checks = checks or ALL_CHECKS
+    def __init__(self, checks: Optional[List[Callable]] = None,
+                 behavior_checks: Optional[List[str]] = None):
+        if checks:
+            self.checks = checks
+        elif behavior_checks:
+            # Use only selected behavior checks, always include timestamp check
+            selected = [_check_timestamp_preservation, _check_no_duplicates]
+            for bc in behavior_checks:
+                fn = BEHAVIOR_CHECK_MAP.get(bc)
+                if fn and fn not in selected:
+                    selected.append(fn)
+            self.checks = selected
+        else:
+            self.checks = ALL_CHECKS
 
     def run(self, result: SimulationResult) -> ValidationReport:
         check_results = []
+
+        # Guard: if too few packets ingested, flag it explicitly
+        min_expected = result.config.get("min_expected_packets", 1)
+        if len(result.uploaded_packets) < min_expected:
+            check_results.append(CheckResult(
+                check_id="MIN_DATA_01",
+                requirement_id="REQ-DATA-000",
+                risk_id="RISK-DP-000",
+                description="Sufficient data ingested for meaningful validation",
+                passed=False,
+                expected=f">= {min_expected} packets",
+                actual=f"Only {len(result.uploaded_packets)} packets ingested",
+                evidence={
+                    "ingested": len(result.uploaded_packets),
+                    "minimum":  min_expected,
+                    "note": "Check network fault settings — data loss may be too high to validate",
+                },
+            ))
+
         for check_fn in self.checks:
             try:
                 cr = check_fn(result)

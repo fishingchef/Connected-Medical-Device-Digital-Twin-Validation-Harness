@@ -184,6 +184,7 @@ class WearableSimulator:
         )
         self._hr_window: Deque[float] = deque(maxlen=self.fw_cfg.hr_moving_avg_window)
         self._rr_window: Deque[float] = deque(maxlen=self.fw_cfg.rr_moving_avg_window)
+        self._packet_counter: int = 0   # persistent — never resets on buffer clear
 
     def process_sample(self, sample: PhysiologySample) -> Optional[DevicePacket]:
         self._drain_battery(seconds=self.fw_cfg.report_interval_sec)
@@ -198,7 +199,7 @@ class WearableSimulator:
         alert, alert_type = self._check_device_alert(hr, rr, temp, conf)
 
         packet = DevicePacket(
-            packet_id=f"{self.config.device_id}-{len(self.local_buffer):06d}",
+            packet_id=f"{self.config.device_id}-{self._packet_counter:06d}",
             device_id=self.config.device_id,
             firmware_version=self.config.firmware_version.value,
             sample_timestamp=sample.timestamp,
@@ -241,6 +242,7 @@ class WearableSimulator:
             },
         )
 
+        self._packet_counter += 1
         if len(self.local_buffer) >= self.config.max_local_buffer:
             self.local_buffer.pop(0)
         self.local_buffer.append(packet)
