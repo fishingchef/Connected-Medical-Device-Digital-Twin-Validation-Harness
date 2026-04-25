@@ -55,6 +55,7 @@ class RunScenarioRequest(BaseModel):
     signal_profiles:     Optional[List[str]] = None
     network_conditions:  Optional[List[str]] = None
     behavior_checks:     Optional[List[str]] = None
+    sync_interval_sec:   Optional[int]       = None  # BLE scan/upload interval override
 
 
 # ── Scenario builder → physiology config mapper ───────────────────────────────
@@ -70,15 +71,44 @@ ACTIVITY_MAP = {
 }
 
 # Map wear/contact conditions to confidence penalty + activity override
+# Wear condition effects on FirmwareConfig and signal quality
+# confidence_floor: minimum confidence regardless of activity (0=no floor, 0.6=capped at 60%)
+# motion_artifact_threshold: lower = firmware rejects more samples as motion-corrupted
+# hr_noise_multiplier: multiplies subject's hr_noise_std
+# min_ppg_amplitude: raise threshold = firmware rejects weak signals
 WEAR_CONDITION_MAP = {
-    "normal":              {"confidence_penalty": 0.0,  "activity_override": None},
-    "low_adhesion":        {"confidence_penalty": 0.25, "activity_override": "poor_contact"},
-    "intermittent":        {"confidence_penalty": 0.35, "activity_override": "poor_contact"},
-    "perspiration":        {"confidence_penalty": 0.15, "activity_override": None},
-    "poor_placement":      {"confidence_penalty": 0.30, "activity_override": "poor_contact"},
-    "high_motion_artifact":{"confidence_penalty": 0.0,  "activity_override": "vigorous"},
-    "low_amplitude":       {"confidence_penalty": 0.40, "activity_override": "poor_contact"},
-    "noisy_signal":        {"confidence_penalty": 0.20, "activity_override": "poor_contact"},
+    "normal": {
+        "confidence_floor": 0.0, "motion_artifact_threshold": None,
+        "min_ppg_amplitude": None, "hr_noise_multiplier": 1.0,
+    },
+    "low_adhesion": {
+        "confidence_floor": 0.55, "motion_artifact_threshold": 0.3,
+        "min_ppg_amplitude": 0.15, "hr_noise_multiplier": 2.5,
+    },
+    "intermittent": {
+        "confidence_floor": 0.40, "motion_artifact_threshold": 0.25,
+        "min_ppg_amplitude": 0.20, "hr_noise_multiplier": 3.0,
+    },
+    "perspiration": {
+        "confidence_floor": 0.60, "motion_artifact_threshold": 0.40,
+        "min_ppg_amplitude": 0.10, "hr_noise_multiplier": 1.8,
+    },
+    "poor_placement": {
+        "confidence_floor": 0.45, "motion_artifact_threshold": 0.30,
+        "min_ppg_amplitude": 0.18, "hr_noise_multiplier": 2.8,
+    },
+    "high_motion_artifact": {
+        "confidence_floor": 0.30, "motion_artifact_threshold": 0.15,
+        "min_ppg_amplitude": 0.05, "hr_noise_multiplier": 2.0,
+    },
+    "low_amplitude": {
+        "confidence_floor": 0.25, "motion_artifact_threshold": 0.35,
+        "min_ppg_amplitude": 0.30, "hr_noise_multiplier": 3.5,
+    },
+    "noisy_signal": {
+        "confidence_floor": 0.35, "motion_artifact_threshold": 0.20,
+        "min_ppg_amplitude": 0.12, "hr_noise_multiplier": 3.0,
+    },
 }
 
 # Map signal profiles to scenario segments
@@ -102,7 +132,12 @@ NETWORK_CONDITION_MAP = {
     "duplicate_retry": {"fault_profile": "flaky",       "fault_schedule": []},
     "out_of_order":    {"fault_profile": "lossy",       "fault_schedule": []},
     "auth_failure":    {"fault_profile": "tls_failure", "fault_schedule": []},
-    "cloud_delay":     {"fault_profile": "flaky",       "fault_schedule": []},
+    "cloud_delay":          {"fault_profile": "flaky",       "fault_schedule": []},
+    "intermittent_network": {"fault_profile": "flaky",       "fault_schedule": [
+        (300,  600,  "WIFI_DOWN"),   # offline 5-10 min
+        (1200, 1500, "WIFI_DOWN"),   # offline 20-25 min
+        (2400, 2700, "WIFI_DOWN"),   # offline 40-45 min
+    ]},
 }
 
 
@@ -115,10 +150,49 @@ def build_scenario_from_request(req: RunScenarioRequest) -> tuple:
 
     fw_map = {"1.0.0": FirmwareVersion.V1_0, "1.2.0": FirmwareVersion.V1_2, "2.0.0": FirmwareVersion.V2_0}
     fw = fw_map.get(req.firmware_version, FirmwareVersion.V1_2)
+
+    # Apply wear condition effects to firmware config
+    wear_conds   = req.wear_conditions or ["normal"]
+    from core.simulators.wearable import FirmwareConfig, FIRMWARE_CONFIGS
+    import copy
+    fw_cfg = copy.deepcopy(FIRMWARE_CONFIGS.get(req.firmware_version, FIRMWARE_CONFIGS["1.2.0"]))
+
+    for wc_id in wear_conds:
+        wc = WEAR_CONDITION_MAP.get(wc_id, WEAR_CONDITION_MAP["normal"])
+        # Lower motion artifact threshold = firmware flags more samples as corrupted
+        if wc["motion_artifact_threshold"] is not None:
+            fw_cfg.motion_artifact_threshold = min(
+                fw_cfg.motion_artifact_threshold,
+                wc["motion_artifact_threshold"]
+            )
+        # Raise min PPG amplitude = firmware rejects weaker signals
+        if wc["min_ppg_amplitude"] is not None:
+            fw_cfg.min_ppg_amplitude = max(
+                fw_cfg.min_ppg_amplitude,
+                wc["min_ppg_amplitude"]
+            )
+        # confidence_floor is applied in wearable via ambient_confidence_floor
+
+    # Pick the worst (lowest) confidence floor across all selected wear conditions
+    confidence_floor = max(
+        wc_data["confidence_floor"]
+        for wc_data in [WEAR_CONDITION_MAP.get(w, WEAR_CONDITION_MAP["normal"]) for w in wear_conds]
+    )
+    # Invert: floor=0.55 means confidence is CAPPED AT 0.55 max
+    # Set as the base confidence by making motion_artifact_threshold very sensitive
+    if confidence_floor > 0:
+        # Clamp signal_confidence base in fw_cfg
+        fw_cfg.motion_artifact_threshold = min(
+            fw_cfg.motion_artifact_threshold,
+            max(0.05, 1.0 - confidence_floor)
+        )
+
     wearable_config = WearableConfig(
         firmware_version=fw,
         initial_battery_pct=req.initial_battery_pct,
         ambient_temp_c=req.ambient_temp_c,
+        firmware_config_override=fw_cfg,
+        confidence_floor=confidence_floor,
     )
 
     # ── Physiology: use new engine if subject+schedule provided ──
@@ -166,7 +240,12 @@ def build_scenario_from_request(req: RunScenarioRequest) -> tuple:
     session_secs = len(samples) * 60
     fault_schedule = [(s, min(e, session_secs), t) for s, e, t in fault_schedule if s < session_secs]
 
-    gateway_config   = GatewayConfig(fault_schedule=fault_schedule)
+    # Apply sync interval if specified
+    ble_scan_interval = req.sync_interval_sec or 30  # default 30s
+    gateway_config   = GatewayConfig(
+        fault_schedule=fault_schedule,
+        ble_scan_interval_sec=ble_scan_interval,
+    )
     fault_prof       = FAULT_PROFILES.get(fault_profile_id, FAULT_PROFILES["clean"])
     expected_buffered = sum((e - s) // 60 for s, e, _ in fault_schedule)
 
@@ -287,6 +366,7 @@ def run_scenario(req: RunScenarioRequest, db: Session = Depends(get_db)):
                 "wear_conditions":          req.wear_conditions,
                 "network_conditions":       req.network_conditions,
                 "duration_seconds":         req.duration_seconds,
+                "sync_interval_sec":        ble_scan_interval,
             },
         )
 

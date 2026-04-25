@@ -11,6 +11,7 @@ const DEFAULT_SCENARIO = {
   networkConds:   ['normal_sync'],
   behaviorChecks: ['timestamps_preserved', 'no_duplicates'],
   firmware:       '1.2.0',
+  syncInterval:   null,   // null = default 30s
 }
 
 export default function App() {

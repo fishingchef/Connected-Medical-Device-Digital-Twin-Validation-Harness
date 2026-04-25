@@ -32,15 +32,23 @@ const WEAR_CONDITIONS = [
 ]
 
 const NETWORK_CONDITIONS = [
-  { id: 'normal_sync',     label: 'Normal Sync',            color: '#00d4a8' },
-  { id: 'gateway_offline', label: 'Gateway Offline',        color: '#f5a623' },
-  { id: 'wifi_outage',     label: 'Wi-Fi Outage',           color: '#f5a623' },
-  { id: 'ble_failure',     label: 'BLE Connection Failure', color: '#ff4757' },
-  { id: 'delayed_upload',  label: 'Delayed Upload',         color: '#f5a623' },
-  { id: 'duplicate_retry', label: 'Duplicate Upload Retry', color: '#a78bfa' },
-  { id: 'out_of_order',    label: 'Out-of-Order Arrival',   color: '#a78bfa' },
-  { id: 'auth_failure',    label: 'Authentication Failure', color: '#ff4757' },
-  { id: 'cloud_delay',     label: 'Cloud Ingestion Delay',  color: '#f5a623' },
+  { id: 'normal_sync',          label: 'Normal Sync',              color: '#00d4a8' },
+  { id: 'gateway_offline',      label: 'Gateway Offline',          color: '#f5a623' },
+  { id: 'wifi_outage',          label: 'Wi-Fi Outage',             color: '#f5a623' },
+  { id: 'intermittent_network', label: 'Intermittent Connection',  color: '#ff4757' },
+  { id: 'ble_failure',          label: 'BLE Connection Failure',   color: '#ff4757' },
+  { id: 'delayed_upload',       label: 'Delayed Upload',           color: '#f5a623' },
+  { id: 'duplicate_retry',      label: 'Duplicate Upload Retry',   color: '#a78bfa' },
+  { id: 'out_of_order',         label: 'Out-of-Order Arrival',     color: '#a78bfa' },
+  { id: 'auth_failure',         label: 'Authentication Failure',   color: '#ff4757' },
+  { id: 'cloud_delay',          label: 'Cloud Ingestion Delay',    color: '#f5a623' },
+]
+
+const SYNC_INTERVALS = [
+  { id: 300,   label: 'Every 5 min' },
+  { id: 600,   label: 'Every 10 min' },
+  { id: 900,   label: 'Every 15 min' },
+  { id: 3600,  label: 'Every 1 hour' },
 ]
 
 const BEHAVIOR_CHECKS = [
@@ -62,7 +70,7 @@ const FIRMWARE_OPTS = [
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function ScenarioRunner({ scenario, onScenarioChange, onReset, onRunComplete }) {
-  const { subject, schedule, wearConds, networkConds, behaviorChecks, firmware } = scenario
+  const { subject, schedule, wearConds, networkConds, behaviorChecks, firmware, syncInterval } = scenario
 
   const [running, setRunning] = useState(false)
   const [result,  setResult]  = useState(null)
@@ -231,6 +239,26 @@ export default function ScenarioRunner({ scenario, onScenarioChange, onReset, on
             </div>
           </Section>
 
+          {/* 4b. Sync interval */}
+          <Section number="4b" title="BLE Sync Interval" hint="optional — default is every 30s">
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              <Chip
+                active={!syncInterval}
+                color="var(--accent)"
+                onClick={() => set('syncInterval', null)}
+              >Default (30s)</Chip>
+              {SYNC_INTERVALS.map(s => (
+                <Chip key={s.id} active={syncInterval === s.id}
+                  onClick={() => set('syncInterval', s.id)}>{s.label}</Chip>
+              ))}
+            </div>
+            {syncInterval && syncInterval >= 3600 && (
+              <div style={{ marginTop: 8, fontSize: 11, color: 'var(--warn)', fontFamily: 'var(--mono)' }}>
+                ⚠ 1-hour sync means device buffers up to 60 samples locally before upload
+              </div>
+            )}
+          </Section>
+
           {/* 5. Behavior checks */}
           <Section number="5" title="Expected Behavior Checks" hint="select checks to validate">
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
@@ -274,6 +302,7 @@ export default function ScenarioRunner({ scenario, onScenarioChange, onReset, on
             <SummaryRow label="Firmware" value={`v${firmware}`} />
             <SummaryRow label="Wear"     value={wearConds.map(id => WEAR_CONDITIONS.find(w => w.id === id)?.label).join(', ')} />
             <SummaryRow label="Network"  value={networkConds.map(id => NETWORK_CONDITIONS.find(n => n.id === id)?.label).join(', ')} />
+            {syncInterval && <SummaryRow label="Sync" value={SYNC_INTERVALS.find(s => s.id === syncInterval)?.label} />}
             <SummaryRow label="Checks"   value={`${behaviorChecks.length} selected`} />
 
             <button onClick={handleRun} disabled={running} style={{
