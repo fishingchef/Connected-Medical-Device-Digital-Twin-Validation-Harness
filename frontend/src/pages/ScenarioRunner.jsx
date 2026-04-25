@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Play, Loader, CheckCircle, XCircle, ChevronRight, Wifi, WifiOff, Battery, Thermometer } from 'lucide-react'
+import { Play, Loader, CheckCircle, XCircle, ChevronRight, Wifi, WifiOff, Battery, Thermometer, Activity } from 'lucide-react'
 import { api } from '../lib/api.js'
 
 const SCENARIOS = [
@@ -196,7 +196,7 @@ export default function ScenarioRunner({ onRunComplete }) {
           }}>
             <div style={{ fontSize: 12, color: 'var(--text3)', fontFamily: 'var(--mono)', marginBottom: 12 }}>RUN CONFIGURATION</div>
 
-            <ConfigRow icon={<Cpu size={13} />} label="Scenario" value={scenario?.name} />
+            <ConfigRow icon={<Activity size={13} />} label="Scenario" value={scenario?.name} />
             <ConfigRow icon={<Battery size={13} />} label="Firmware" value={`v${fw}`} />
             <ConfigRow icon={<Battery size={13} />} label="Battery" value={`${battery}%`} />
             <ConfigRow icon={<Thermometer size={13} />} label="Ambient" value={`${ambient}°C`} />
