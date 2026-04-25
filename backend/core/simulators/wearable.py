@@ -154,6 +154,11 @@ class DevicePacket:
     alert_triggered:        bool  = False
     alert_type:             Optional[str] = None
     fw_config_snapshot:     Optional[dict] = None
+    # Pass-through from PhysiologySample
+    gait_cadence:           float = 0.0
+    step_count:             int   = 0
+    sleep_stage:            str   = "AWAKE"
+    hour_of_day:            float = 0.0
 
     def to_dict(self) -> dict:
         return self.__dict__.copy()
@@ -169,6 +174,7 @@ class WearableConfig:
     ambient_temp_c:           float = 22.0
     crc_check_enabled:        bool  = True
     firmware_config_override: Optional[FirmwareConfig] = None
+    confidence_floor:         float = 0.0  # wear condition cap: 0=none, 0.55=capped at 55%
 
 
 class WearableSimulator:
@@ -240,6 +246,10 @@ class WearableSimulator:
                 "enable_delta_encoding":   self.fw_cfg.enable_delta_encoding,
                 "enable_rle_compression":  self.fw_cfg.enable_rle_compression,
             },
+            gait_cadence  = getattr(sample, "gait_cadence", 0.0),
+            step_count    = getattr(sample, "step_count",   0),
+            sleep_stage   = getattr(sample, "sleep_stage",  "AWAKE"),
+            hour_of_day   = getattr(sample, "hour_of_day",  0.0),
         )
 
         self._packet_counter += 1
@@ -281,6 +291,9 @@ class WearableSimulator:
             conf -= 0.08 * ((15 - self.config.ambient_temp_c) / 10)
         if self.battery < 30:
             conf -= 0.10 * (1 - self.battery / 30)
+        # Apply wear condition confidence floor (caps maximum achievable confidence)
+        if self.config.confidence_floor > 0:
+            conf = min(conf, 1.0 - self.config.confidence_floor)
         return round(max(0.05, min(1.0, conf)), 3)
 
     def _check_device_alert(self, hr, rr, temp, conf):
