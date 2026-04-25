@@ -241,7 +241,6 @@ def build_scenario_from_request(req: RunScenarioRequest) -> tuple:
     fault_schedule = [(s, min(e, session_secs), t) for s, e, t in fault_schedule if s < session_secs]
 
     # Apply sync interval if specified
-    ble_scan_interval = req.sync_interval_sec or 30  # default 30s
     gateway_config   = GatewayConfig(
         fault_schedule=fault_schedule,
         ble_scan_interval_sec=ble_scan_interval,
@@ -275,6 +274,9 @@ def run_scenario(req: RunScenarioRequest, db: Session = Depends(get_db)):
     try:
         run_id = f"RUN-{uuid.uuid4().hex[:12].upper()}"
 
+        # Sync interval — defined early so both code paths can use it
+        ble_scan_interval = req.sync_interval_sec or 60  # default 60s
+
         # Build config from builder or legacy scenario
         if req.scenario_id == "CUSTOM" or req.subject_profile or req.activity_profiles:
             samples, wearable_config, gateway_config, fault_prof, expected_buffered =                 build_scenario_from_request(req)
@@ -291,7 +293,7 @@ def run_scenario(req: RunScenarioRequest, db: Session = Depends(get_db)):
             fault_schedule = []
             if req.outage_start_min is not None and req.outage_end_min is not None:
                 fault_schedule = [(req.outage_start_min * 60, req.outage_end_min * 60, "WIFI_DOWN")]
-            gateway_config    = GatewayConfig(fault_schedule=fault_schedule)
+            gateway_config    = GatewayConfig(fault_schedule=fault_schedule, ble_scan_interval_sec=ble_scan_interval)
             fault_prof        = FAULT_PROFILES.get(req.fault_profile, FAULT_PROFILES["clean"])
             expected_buffered = (fault_schedule[0][1] - fault_schedule[0][0]) // 60 if fault_schedule else 0
             samples = list(PhysiologyGenerator(phys_config).generate())

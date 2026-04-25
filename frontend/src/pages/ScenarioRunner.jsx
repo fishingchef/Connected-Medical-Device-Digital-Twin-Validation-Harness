@@ -246,7 +246,7 @@ export default function ScenarioRunner({ scenario, onScenarioChange, onReset, on
                 active={!syncInterval}
                 color="var(--accent)"
                 onClick={() => set('syncInterval', null)}
-              >Default (30s)</Chip>
+              >Default (1 min)</Chip>
               {SYNC_INTERVALS.map(s => (
                 <Chip key={s.id} active={syncInterval === s.id}
                   onClick={() => set('syncInterval', s.id)}>{s.label}</Chip>
