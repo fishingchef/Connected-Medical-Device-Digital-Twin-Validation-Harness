@@ -1,25 +1,23 @@
+import { Play, Loader, CheckCircle, XCircle, ChevronRight, User, RotateCcw } from 'lucide-react'
 import { useState } from 'react'
-import { Play, Loader, CheckCircle, XCircle, ChevronRight, User, Activity } from 'lucide-react'
 import { api } from '../lib/api.js'
 
-// ── Option definitions ────────────────────────────────────────────────────────
-
 const SUBJECT_PROFILES = [
-  { id: 'healthy_adult_m',  label: 'Healthy Adult Male',    detail: '35yr, moderate fitness, HR rest 65',  color: '#00d4a8' },
-  { id: 'healthy_adult_f',  label: 'Healthy Adult Female',  detail: '32yr, moderate fitness, HR rest 68',  color: '#00d4a8' },
-  { id: 'athletic_m',       label: 'Athletic Male',         detail: '28yr, high fitness, HR rest 52',      color: '#0096ff' },
-  { id: 'elderly_f',        label: 'Elderly Female',        detail: '72yr, sedentary, HR rest 74',         color: '#a78bfa' },
-  { id: 'clinical_patient', label: 'Clinical Patient',      detail: '58yr, sedentary, elevated baseline',  color: '#f5a623' },
-  { id: 'fever_patient',    label: 'Fever Patient',         detail: '34yr, HR 90, Temp 38.4°C baseline',  color: '#ff4757' },
+  { id: 'healthy_adult_m',  label: 'Healthy Adult Male',   detail: '35yr, moderate fitness, HR rest 65', color: '#00d4a8' },
+  { id: 'healthy_adult_f',  label: 'Healthy Adult Female', detail: '32yr, moderate fitness, HR rest 68', color: '#00d4a8' },
+  { id: 'athletic_m',       label: 'Athletic Male',        detail: '28yr, high fitness, HR rest 52',     color: '#0096ff' },
+  { id: 'elderly_f',        label: 'Elderly Female',       detail: '72yr, sedentary, HR rest 74',        color: '#a78bfa' },
+  { id: 'clinical_patient', label: 'Clinical Patient',     detail: '58yr, sedentary, elevated baseline', color: '#f5a623' },
+  { id: 'fever_patient',    label: 'Fever Patient',        detail: '34yr, HR 90, Temp 38.4°C baseline', color: '#ff4757' },
 ]
 
 const DAY_SCHEDULES = [
-  { id: 'typical_day',         label: 'Typical Day',              detail: 'Sleep → work → exercise → evening (16h)',     icon: '🌅', recommended: 'healthy_adult_m' },
-  { id: 'sleep_study',         label: 'Sleep Study',              detail: 'Full 8h sleep architecture with REM cycles',   icon: '😴', recommended: 'healthy_adult_m' },
-  { id: 'exercise_session',    label: 'Exercise Session',         detail: 'Warmup → run → cooldown (60 min)',             icon: '🏃', recommended: 'athletic_m' },
-  { id: 'clinical_monitoring', label: 'Clinical Monitoring',      detail: 'Hospital bed, minimal activity (24h)',         icon: '🏥', recommended: 'clinical_patient' },
-  { id: 'fever_progression',   label: 'Fever Progression',        detail: 'Gradual fever onset over 5h',                  icon: '🌡️', recommended: 'fever_patient' },
-  { id: 'high_motion_wear',    label: 'High Motion Wear Test',    detail: 'Walk → stairs → run → recovery (55 min)',      icon: '⚡', recommended: 'athletic_m' },
+  { id: 'typical_day',         label: 'Typical Day',           detail: 'Sleep → work → exercise → evening (16h)',   icon: '🌅', recommended: 'healthy_adult_m' },
+  { id: 'sleep_study',         label: 'Sleep Study',           detail: 'Full 8h sleep architecture with REM cycles', icon: '😴', recommended: 'healthy_adult_m' },
+  { id: 'exercise_session',    label: 'Exercise Session',      detail: 'Warmup → run → cooldown (60 min)',           icon: '🏃', recommended: 'athletic_m' },
+  { id: 'clinical_monitoring', label: 'Clinical Monitoring',   detail: 'Hospital bed, minimal activity (24h)',       icon: '🏥', recommended: 'clinical_patient' },
+  { id: 'fever_progression',   label: 'Fever Progression',     detail: 'Gradual fever onset over 5h',                icon: '🌡️', recommended: 'fever_patient' },
+  { id: 'high_motion_wear',    label: 'High Motion Wear Test', detail: 'Walk → stairs → run → recovery (55 min)',    icon: '⚡', recommended: 'athletic_m' },
 ]
 
 const WEAR_CONDITIONS = [
@@ -34,15 +32,15 @@ const WEAR_CONDITIONS = [
 ]
 
 const NETWORK_CONDITIONS = [
-  { id: 'normal_sync',     label: 'Normal Sync',             color: '#00d4a8' },
-  { id: 'gateway_offline', label: 'Gateway Offline',         color: '#f5a623' },
-  { id: 'wifi_outage',     label: 'Wi-Fi Outage',            color: '#f5a623' },
-  { id: 'ble_failure',     label: 'BLE Connection Failure',  color: '#ff4757' },
-  { id: 'delayed_upload',  label: 'Delayed Upload',          color: '#f5a623' },
-  { id: 'duplicate_retry', label: 'Duplicate Upload Retry',  color: '#a78bfa' },
-  { id: 'out_of_order',    label: 'Out-of-Order Arrival',    color: '#a78bfa' },
-  { id: 'auth_failure',    label: 'Authentication Failure',  color: '#ff4757' },
-  { id: 'cloud_delay',     label: 'Cloud Ingestion Delay',   color: '#f5a623' },
+  { id: 'normal_sync',     label: 'Normal Sync',            color: '#00d4a8' },
+  { id: 'gateway_offline', label: 'Gateway Offline',        color: '#f5a623' },
+  { id: 'wifi_outage',     label: 'Wi-Fi Outage',           color: '#f5a623' },
+  { id: 'ble_failure',     label: 'BLE Connection Failure', color: '#ff4757' },
+  { id: 'delayed_upload',  label: 'Delayed Upload',         color: '#f5a623' },
+  { id: 'duplicate_retry', label: 'Duplicate Upload Retry', color: '#a78bfa' },
+  { id: 'out_of_order',    label: 'Out-of-Order Arrival',   color: '#a78bfa' },
+  { id: 'auth_failure',    label: 'Authentication Failure', color: '#ff4757' },
+  { id: 'cloud_delay',     label: 'Cloud Ingestion Delay',  color: '#f5a623' },
 ]
 
 const BEHAVIOR_CHECKS = [
@@ -63,30 +61,30 @@ const FIRMWARE_OPTS = [
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export default function ScenarioRunner({ onRunComplete }) {
-  const [subject,        setSubject]        = useState('healthy_adult_m')
-  const [schedule,       setSchedule]       = useState('typical_day')
-  const [wearConds,      setWearConds]      = useState(['normal'])
-  const [networkConds,   setNetworkConds]   = useState(['normal_sync'])
-  const [behaviorChecks, setBehaviorChecks] = useState(['timestamps_preserved', 'no_duplicates'])
-  const [firmware,       setFirmware]       = useState('1.2.0')
-  const [running,        setRunning]        = useState(false)
-  const [result,         setResult]         = useState(null)
-  const [error,          setError]          = useState(null)
+export default function ScenarioRunner({ scenario, onScenarioChange, onReset, onRunComplete }) {
+  const { subject, schedule, wearConds, networkConds, behaviorChecks, firmware } = scenario
 
-  function toggle(list, setList, id) {
-    setList(prev => prev.includes(id)
-      ? (prev.length > 1 ? prev.filter(x => x !== id) : prev)  // keep at least 1
-      : [...prev, id]
-    )
+  const [running, setRunning] = useState(false)
+  const [result,  setResult]  = useState(null)
+  const [error,   setError]   = useState(null)
+
+  function set(key, val) { onScenarioChange(prev => ({ ...prev, [key]: val })) }
+
+  function toggle(key, id) {
+    onScenarioChange(prev => {
+      const list = prev[key]
+      const next = list.includes(id)
+        ? (list.length > 1 ? list.filter(x => x !== id) : list)
+        : [...list, id]
+      return { ...prev, [key]: next }
+    })
   }
 
-  const subjectObj   = SUBJECT_PROFILES.find(s => s.id === subject)
-  const scheduleObj  = DAY_SCHEDULES.find(s => s.id === schedule)
-  const recommended  = scheduleObj?.recommended
-  const mismatch     = recommended && subject !== recommended
-  const recommendedLabel = SUBJECT_PROFILES.find(s => s.id === recommended)?.label
+  const subjectObj  = SUBJECT_PROFILES.find(s => s.id === subject)
   const scheduleObj = DAY_SCHEDULES.find(s => s.id === schedule)
+  const recommended = scheduleObj?.recommended
+  const mismatch    = recommended && subject !== recommended
+  const recommendedLabel = SUBJECT_PROFILES.find(s => s.id === recommended)?.label
 
   async function handleRun() {
     setRunning(true)
@@ -103,21 +101,16 @@ export default function ScenarioRunner({ onRunComplete }) {
         wear_conditions:    wearConds,
         network_conditions: networkConds,
         behavior_checks:    behaviorChecks,
-        fault_profile:      networkConds.includes('wifi_outage')    ? 'outage_20min'
-                          : networkConds.includes('ble_failure')    ? 'flaky'
-                          : networkConds.includes('auth_failure')   ? 'tls_failure'
-                          : networkConds.includes('out_of_order')   ? 'lossy'
+        fault_profile:      networkConds.includes('wifi_outage')  ? 'outage_20min'
+                          : networkConds.includes('ble_failure')  ? 'flaky'
+                          : networkConds.includes('auth_failure') ? 'tls_failure'
+                          : networkConds.includes('out_of_order') ? 'lossy'
                           : 'clean',
       }
       const data = await api.runScenario(body)
-
-      if (!data || data.status === 'error') {
-        setError(data?.error || 'Unknown backend error')
-        return
-      }
+      if (!data || data.status === 'error') { setError(data?.error || 'Unknown error'); return }
       if (!data.validation || typeof data.validation.passed === 'undefined') {
-        setError(`Unexpected response: ${JSON.stringify(data).slice(0, 300)}`)
-        return
+        setError(`Unexpected response: ${JSON.stringify(data).slice(0, 300)}`); return
       }
       setResult(data)
     } catch (e) {
@@ -129,15 +122,28 @@ export default function ScenarioRunner({ onRunComplete }) {
 
   return (
     <div style={{ padding: '28px 36px', maxWidth: 1100, margin: '0 auto' }}>
+
       {/* Header */}
-      <div style={{ marginBottom: 24 }}>
-        <div style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--accent)', letterSpacing: '0.12em', marginBottom: 6 }}>
-          SCENARIO BUILDER
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 24 }}>
+        <div>
+          <div style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--accent)', letterSpacing: '0.12em', marginBottom: 6 }}>
+            SCENARIO BUILDER
+          </div>
+          <h1 style={{ fontSize: 24, fontWeight: 300, letterSpacing: '-0.02em' }}>Scenario Runner</h1>
+          <p style={{ color: 'var(--text2)', fontSize: 13, marginTop: 4 }}>
+            Select a subject + schedule, then layer wear conditions and network faults.
+          </p>
         </div>
-        <h1 style={{ fontSize: 24, fontWeight: 300, letterSpacing: '-0.02em' }}>Scenario Runner</h1>
-        <p style={{ color: 'var(--text2)', fontSize: 13, marginTop: 4 }}>
-          Select a subject + activity schedule, then layer wear conditions and network faults to test system behavior.
-        </p>
+
+        {/* Reset button */}
+        <button onClick={() => { onReset(); setResult(null); setError(null) }} style={{
+          display: 'flex', alignItems: 'center', gap: 6,
+          padding: '8px 14px', borderRadius: 7, cursor: 'pointer',
+          background: 'var(--bg2)', border: '1px solid var(--border)',
+          color: 'var(--text3)', fontSize: 12, transition: 'all 0.15s',
+        }}>
+          <RotateCcw size={12} /> Reset all selections
+        </button>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 340px', gap: 24, alignItems: 'start' }}>
@@ -145,11 +151,11 @@ export default function ScenarioRunner({ onRunComplete }) {
         {/* ── Left builder ── */}
         <div style={{ display: 'grid', gap: 14 }}>
 
-          {/* 1. Subject profile */}
+          {/* 1. Subject */}
           <Section number="1" title="Subject Profile" hint="select one">
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
               {SUBJECT_PROFILES.map(s => (
-                <button key={s.id} onClick={() => setSubject(s.id)} style={{
+                <button key={s.id} onClick={() => set('subject', s.id)} style={{
                   padding: '10px 12px', borderRadius: 8, textAlign: 'left', cursor: 'pointer',
                   background: subject === s.id ? s.color + '12' : 'var(--bg3)',
                   border: `1px solid ${subject === s.id ? s.color + '60' : 'var(--border)'}`,
@@ -167,27 +173,24 @@ export default function ScenarioRunner({ onRunComplete }) {
             </div>
           </Section>
 
-          {/* 2. Day schedule */}
+          {/* 2. Schedule */}
           <Section number="2" title="Activity Schedule" hint="select one">
             <div style={{ display: 'grid', gap: 6 }}>
               {DAY_SCHEDULES.map(s => (
-                <button key={s.id} onClick={() => setSchedule(s.id)} style={{
+                <button key={s.id} onClick={() => set('schedule', s.id)} style={{
                   padding: '10px 14px', borderRadius: 8, textAlign: 'left', cursor: 'pointer',
                   background: schedule === s.id ? 'rgba(0,212,168,0.08)' : 'var(--bg3)',
                   border: `1px solid ${schedule === s.id ? 'var(--accent)' : 'var(--border)'}`,
-                  display: 'flex', alignItems: 'center', gap: 12,
-                  transition: 'all 0.12s',
+                  display: 'flex', alignItems: 'center', gap: 12, transition: 'all 0.12s',
                 }}>
                   <span style={{ fontSize: 18, lineHeight: 1 }}>{s.icon}</span>
-                  <div>
+                  <div style={{ flex: 1 }}>
                     <div style={{ fontSize: 12, fontWeight: 500, color: schedule === s.id ? 'var(--accent)' : 'var(--text)', marginBottom: 2 }}>
                       {s.label}
                     </div>
                     <div style={{ fontSize: 11, color: 'var(--text3)' }}>{s.detail}</div>
                   </div>
-                  {schedule === s.id && (
-                    <CheckCircle size={14} color="var(--accent)" style={{ marginLeft: 'auto', flexShrink: 0 }} />
-                  )}
+                  {schedule === s.id && <CheckCircle size={14} color="var(--accent)" style={{ flexShrink: 0 }} />}
                 </button>
               ))}
             </div>
@@ -198,12 +201,12 @@ export default function ScenarioRunner({ onRunComplete }) {
             <div style={{
               padding: '10px 14px', borderRadius: 8, fontSize: 12,
               background: 'rgba(245,166,35,0.08)', border: '1px solid rgba(245,166,35,0.3)',
-              color: 'var(--warn)', display: 'flex', alignItems: 'center', gap: 8,
+              color: 'var(--warn)', display: 'flex', alignItems: 'flex-start', gap: 8,
             }}>
-              <span>⚠</span>
+              <span style={{ flexShrink: 0, marginTop: 1 }}>⚠</span>
               <span>
                 <strong>{scheduleObj?.label}</strong> is designed for <strong>{recommendedLabel}</strong>.
-                Your selection will still run — subject physiology will be applied to the schedule.
+                Your selection will still run — the chosen subject's physiology will be applied to the schedule.
               </span>
             </div>
           )}
@@ -213,21 +216,17 @@ export default function ScenarioRunner({ onRunComplete }) {
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
               {WEAR_CONDITIONS.map(w => (
                 <Chip key={w.id} active={wearConds.includes(w.id)} color={w.color}
-                  onClick={() => toggle(wearConds, setWearConds, w.id)}>
-                  {w.label}
-                </Chip>
+                  onClick={() => toggle('wearConds', w.id)}>{w.label}</Chip>
               ))}
             </div>
           </Section>
 
-          {/* 4. Network condition */}
+          {/* 4. Network */}
           <Section number="4" title="Gateway / Network Condition" hint="multi-select">
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
               {NETWORK_CONDITIONS.map(n => (
                 <Chip key={n.id} active={networkConds.includes(n.id)} color={n.color}
-                  onClick={() => toggle(networkConds, setNetworkConds, n.id)}>
-                  {n.label}
-                </Chip>
+                  onClick={() => toggle('networkConds', n.id)}>{n.label}</Chip>
               ))}
             </div>
           </Section>
@@ -245,7 +244,7 @@ export default function ScenarioRunner({ onRunComplete }) {
                   transition: 'all 0.1s',
                 }}>
                   <input type="checkbox" checked={behaviorChecks.includes(b.id)}
-                    onChange={() => toggle(behaviorChecks, setBehaviorChecks, b.id)}
+                    onChange={() => toggle('behaviorChecks', b.id)}
                     style={{ accentColor: 'var(--accent)', flexShrink: 0 }} />
                   {b.label}
                 </label>
@@ -258,7 +257,7 @@ export default function ScenarioRunner({ onRunComplete }) {
             <div style={{ display: 'flex', gap: 8 }}>
               {FIRMWARE_OPTS.map(f => (
                 <Chip key={f.v} active={firmware === f.v}
-                  onClick={() => setFirmware(f.v)}>{f.label}</Chip>
+                  onClick={() => set('firmware', f.v)}>{f.label}</Chip>
               ))}
             </div>
           </Section>
@@ -270,7 +269,6 @@ export default function ScenarioRunner({ onRunComplete }) {
             <div style={{ fontSize: 11, fontFamily: 'var(--mono)', color: 'var(--text3)', marginBottom: 14 }}>
               SCENARIO SUMMARY
             </div>
-
             <SummaryRow label="Subject"  value={subjectObj?.label} />
             <SummaryRow label="Schedule" value={`${scheduleObj?.icon} ${scheduleObj?.label}`} />
             <SummaryRow label="Firmware" value={`v${firmware}`} />
@@ -317,13 +315,13 @@ export default function ScenarioRunner({ onRunComplete }) {
                     </span>
                   </div>
                   <div style={{ fontSize: 11, color: 'var(--text2)' }}>
-                    {result.validation.pass_count}/{(result.validation.pass_count || 0) + (result.validation.fail_count || 0)} passed
+                    {result.validation.pass_count}/{(result.validation.pass_count||0)+(result.validation.fail_count||0)} passed
                     · {result.total_uploaded} packets
                   </div>
                 </div>
 
                 {(result.validation.results || []).map(r => (
-                  <div key={r.check_id} style={{
+                  <div key={r.check_id || r.check_name} style={{
                     display: 'flex', alignItems: 'flex-start', gap: 7,
                     padding: '5px 0', borderBottom: '1px solid var(--border)', fontSize: 11,
                   }}>
@@ -336,8 +334,8 @@ export default function ScenarioRunner({ onRunComplete }) {
 
                 <button onClick={() => onRunComplete(result.run_id)} style={{
                   width: '100%', marginTop: 10, padding: '8px 0', borderRadius: 6,
-                  background: 'var(--bg3)', border: '1px solid var(--border2)',
-                  color: 'var(--text2)', fontSize: 12, cursor: 'pointer',
+                  background: 'var(--accent)', border: 'none',
+                  color: '#000', fontSize: 12, fontWeight: 600, cursor: 'pointer',
                   display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
                 }}>
                   View full report <ChevronRight size={12} />
@@ -352,8 +350,6 @@ export default function ScenarioRunner({ onRunComplete }) {
     </div>
   )
 }
-
-// ── Sub-components ────────────────────────────────────────────────────────────
 
 function Section({ number, title, hint, children }) {
   return (

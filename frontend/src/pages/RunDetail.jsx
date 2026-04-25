@@ -49,6 +49,9 @@ export default function RunDetail({ runId, onBack }) {
   const bufferedMins = chartData.filter(d => d.buf).map(d => d.min)
   const outageStart  = bufferedMins.length ? Math.min(...bufferedMins) : null
   const outageEnd    = bufferedMins.length ? Math.max(...bufferedMins) : null
+  const outageLabel  = outageStart !== null
+    ? `Gateway offline min ${outageStart}–${outageEnd} (${outageEnd - outageStart} min, ${bufferedMins.length} buffered packets)`
+    : null
   const passed       = report?.passed
   const totalSteps   = packets.length ? (packets[packets.length - 1].step_count || 0) : 0
   const lowConfCount = packets.filter(p => p.signal_confidence < 0.4).length
@@ -59,13 +62,29 @@ export default function RunDetail({ runId, onBack }) {
   return (
     <div style={{ padding: '28px 36px', maxWidth: 1100, margin: '0 auto' }}>
 
-      {/* Header */}
-      <button onClick={onBack} style={{
-        display: 'flex', alignItems: 'center', gap: 6, background: 'none',
-        color: 'var(--text3)', fontSize: 12, marginBottom: 20, cursor: 'pointer', padding: 0, border: 'none',
-      }}>
-        <ArrowLeft size={13} /> Back to history
-      </button>
+      {/* Header nav */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20 }}>
+        <button onClick={onBack} style={{
+          display: 'flex', alignItems: 'center', gap: 6, background: 'none',
+          color: 'var(--text3)', fontSize: 12, cursor: 'pointer', padding: 0, border: 'none',
+        }}>
+          <ArrowLeft size={13} />
+          {prevPage === 'history' ? 'Back to run history' : 'Back'}
+        </button>
+
+        {prevPage !== 'runner' && (
+          <>
+            <span style={{ color: 'var(--border2)', fontSize: 12 }}>·</span>
+            <button onClick={onBackToRunner} style={{
+              display: 'flex', alignItems: 'center', gap: 6, background: 'none',
+              color: 'var(--accent)', fontSize: 12, cursor: 'pointer', padding: 0, border: 'none',
+              fontWeight: 500,
+            }}>
+              ↩ Return to Scenario Runner
+            </button>
+          </>
+        )}
+      </div>
 
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 24 }}>
         <div>
@@ -125,9 +144,9 @@ export default function RunDetail({ runId, onBack }) {
       {tab === 'vitals' && (
         <div>
           <ChartCard title="Heart Rate & Respiratory Rate" icon={<Activity size={14} color="var(--accent)" />}>
-            {outageStart !== null && (
+            {outageLabel && (
               <div style={{ fontSize: 11, color: 'var(--warn)', fontFamily: 'var(--mono)', marginBottom: 8 }}>
-                ⚠ Gateway offline min {outageStart}–{outageEnd}
+                ⚠ {outageLabel}
               </div>
             )}
             <ResponsiveContainer width="100%" height={200}>
