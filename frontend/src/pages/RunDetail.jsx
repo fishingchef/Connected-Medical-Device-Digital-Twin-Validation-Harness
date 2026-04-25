@@ -12,7 +12,7 @@ const SLEEP_COLORS = {
   AWAKE: '#f5a623', LIGHT: '#0096ff', DEEP: '#a78bfa', REM: '#00d4a8'
 }
 
-export default function RunDetail({ runId, onBack }) {
+export default function RunDetail({ runId, prevPage, onBack, onBackToRunner }) {
   const [run,     setRun]     = useState(null)
   const [packets, setPackets] = useState([])
   const [report,  setReport]  = useState(null)
